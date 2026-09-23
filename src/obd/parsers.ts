@@ -164,6 +164,30 @@ export type ReadinessReport = {
   monitors: ReadinessMonitor[];
 };
 
+/** Non-continuous monitors by C/D bit (0..7), spark ignition (petrol). */
+const SPARK_MONITORS: Array<string | null> = [
+  'Katalitik konv.',
+  'Isınmış katalizör',
+  'Buharlaşma sistemi',
+  'İkincil hava',
+  'A/C soğutucu',
+  'O2 sensörü',
+  'O2 sensör ısıtıcı',
+  'EGR sistemi',
+];
+
+/** Non-continuous monitors by C/D bit (0..7), compression ignition (diesel). null = reserved. */
+const DIESEL_MONITORS: Array<string | null> = [
+  'NMHC katalizörü',
+  'NOx/SCR sistemi',
+  null,
+  'Turbo basıncı',
+  null,
+  'Egzoz gaz sensörü',
+  'Partikül filtresi (DPF)',
+  'EGR/VVT sistemi',
+];
+
 /**
  * Parse Mode 01 PID 01: MIL status + DTC count + readiness monitors.
  *
@@ -185,21 +209,21 @@ export function parseReadiness(raw: string): ReadinessReport | null {
   const D = parseInt(hex.substring(6, 8), 16);
   if ([A, B, C, D].some((n) => isNaN(n))) return null;
 
+  // B bit 3: compression ignition (diesel). Diesel ECUs reuse the C/D bits
+  // for a different monitor set (SAE J1979); bits 2 and 4 are reserved there.
+  const diesel = !!(B & 0x08);
   const continuous: ReadinessMonitor[] = [
     { name: 'Misfire',         supported: !!(B & 0x01), ready: !(B & 0x10), continuous: true },
     { name: 'Yakıt sistemi',   supported: !!(B & 0x02), ready: !(B & 0x20), continuous: true },
     { name: 'Bileşenler',      supported: !!(B & 0x04), ready: !(B & 0x40), continuous: true },
   ];
-  const nonContinuous: ReadinessMonitor[] = [
-    { name: 'Katalitik konv.',     supported: !!(C & 0x01), ready: !(D & 0x01), continuous: false },
-    { name: 'Isınmış katalizör',   supported: !!(C & 0x02), ready: !(D & 0x02), continuous: false },
-    { name: 'Buharlaşma sistemi',  supported: !!(C & 0x04), ready: !(D & 0x04), continuous: false },
-    { name: 'İkincil hava',        supported: !!(C & 0x08), ready: !(D & 0x08), continuous: false },
-    { name: 'A/C soğutucu',        supported: !!(C & 0x10), ready: !(D & 0x10), continuous: false },
-    { name: 'O2 sensörü',          supported: !!(C & 0x20), ready: !(D & 0x20), continuous: false },
-    { name: 'O2 sensör ısıtıcı',   supported: !!(C & 0x40), ready: !(D & 0x40), continuous: false },
-    { name: 'EGR sistemi',         supported: !!(C & 0x80), ready: !(D & 0x80), continuous: false },
-  ];
+  const names = diesel ? DIESEL_MONITORS : SPARK_MONITORS;
+  const nonContinuous: ReadinessMonitor[] = [];
+  names.forEach((name, bit) => {
+    if (name === null) return;
+    const mask = 1 << bit;
+    nonContinuous.push({ name, supported: !!(C & mask), ready: !(D & mask), continuous: false });
+  });
 
   return {
     milOn: !!(A & 0x80),

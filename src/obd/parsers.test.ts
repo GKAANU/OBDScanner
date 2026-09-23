@@ -6,12 +6,15 @@ import {
   parseCVN,
   parseBatteryVoltage,
   detectOBDError,
+  decodeDTCHex,
+  parseFreezeFrameDTC,
 } from './parsers';
 import {
   parsePidResponse,
   PID_BY_ID,
   parseSupportedPids,
   extractDataBytes,
+  parseFreezeFramePidResponse,
 } from './pid-registry';
 
 describe('parseDTCs', () => {
@@ -176,5 +179,73 @@ describe('detectOBDError', () => {
   });
   it('returns null for valid response', () => {
     expect(detectOBDError('41 0C 1A F8')).toBeNull();
+  });
+});
+
+describe('decodeDTCHex', () => {
+  it('decodes P, C, B and U codes', () => {
+    expect(decodeDTCHex('0420')).toBe('P0420');
+    expect(decodeDTCHex('4123')).toBe('C0123');
+    expect(decodeDTCHex('9001')).toBe('B1001');
+    expect(decodeDTCHex('C100')).toBe('U0100');
+  });
+  it('returns null for 0000 and malformed input', () => {
+    expect(decodeDTCHex('0000')).toBeNull();
+    expect(decodeDTCHex('04')).toBeNull();
+    expect(decodeDTCHex('ZZZZ')).toBeNull();
+  });
+});
+
+describe('parseFreezeFrameDTC (Mode 02 PID 02)', () => {
+  it('decodes the DTC that stored frame 00', () => {
+    expect(parseFreezeFrameDTC('42 02 00 01 33 >')).toBe('P0133');
+  });
+  it('handles spaces-off output (ATS0)', () => {
+    expect(parseFreezeFrameDTC('4202000420\r\r>')).toBe('P0420');
+  });
+  it('returns null when no freeze frame is stored (0000)', () => {
+    expect(parseFreezeFrameDTC('42 02 00 00 00 >')).toBeNull();
+  });
+  it('returns null for NO DATA', () => {
+    expect(parseFreezeFrameDTC('NO DATA >')).toBeNull();
+  });
+  it('respects the requested frame number', () => {
+    expect(parseFreezeFrameDTC('42 02 00 01 33 >', '01')).toBeNull();
+    expect(parseFreezeFrameDTC('42 02 01 03 01 >', '01')).toBe('P0301');
+  });
+});
+
+describe('parseFreezeFramePidResponse (Mode 02)', () => {
+  it('skips the echoed frame byte before the data (RPM)', () => {
+    // 42 0C 00 1A F8 -> frame 00, RPM = 0x1AF8 / 4 = 1726
+    expect(parseFreezeFramePidResponse(PID_BY_ID.RPM, '42 0C 00 1A F8 >')).toBe(1726);
+  });
+  it('decodes a 1-byte PID (ECT = 90 C)', () => {
+    expect(parseFreezeFramePidResponse(PID_BY_ID.ECT, '42 05 00 82 >')).toBe(90);
+  });
+  it('decodes a signed fuel trim (STFT B1)', () => {
+    const v = parseFreezeFramePidResponse(PID_BY_ID.STFT1, '42060080') as number;
+    expect(v).toBe(0);
+  });
+  it('returns null for a Mode 01 response (wrong mode)', () => {
+    expect(parseFreezeFramePidResponse(PID_BY_ID.RPM, '41 0C 1A F8 >')).toBeNull();
+  });
+  it('returns null for NO DATA and for truncated data', () => {
+    expect(parseFreezeFramePidResponse(PID_BY_ID.RPM, 'NO DATA >')).toBeNull();
+    expect(parseFreezeFramePidResponse(PID_BY_ID.RPM, '42 0C 00 1A >')).toBeNull();
+  });
+});
+
+describe('parseSupportedPids (Mode 02)', () => {
+  it('decodes the freeze frame bitmap, skipping the frame byte', () => {
+    // 42 00 00 7E 1F 80 00 -> 02..07, 0C..10, 11
+    const s2 = parseSupportedPids('42 00 00 7E 1F 80 00 >', '00', '02');
+    expect(s2).toEqual(['02', '03', '04', '05', '06', '07', '0C', '0D', '0E', '0F', '10', '11']);
+  });
+  it('returns empty for a Mode 01 reply when mode 02 is requested', () => {
+    expect(parseSupportedPids('41 00 BE 1F A8 13 >', '00', '02')).toEqual([]);
+  });
+  it('returns empty for NO DATA', () => {
+    expect(parseSupportedPids('NO DATA', '00', '02')).toEqual([]);
   });
 });

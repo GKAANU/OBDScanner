@@ -99,12 +99,43 @@ export function parsePidResponse(def: PIDDef, raw: string): number | string | nu
 }
 
 /**
- * Parse a "supported PIDs" bitmap response (Mode 01 PIDs 00, 20, 40, 60, 80, A0, C0, E0).
+ * Parse a Mode 02 (freeze frame) response for a registry PID.
+ *
+ * Request `02 <PID> <frame>` -> response `42 <PID> <frame> <data...>`.
+ * The echoed frame byte sits between the PID and the data bytes, so the
+ * marker we search for includes it; otherwise the frame byte would be
+ * misread as the first data byte.
+ */
+export function parseFreezeFramePidResponse(
+  def: PIDDef,
+  raw: string,
+  frame = '00'
+): number | string | null {
+  const bytes = extractDataBytes(raw, `42${def.pid}${frame.toUpperCase()}`);
+  if (!bytes || bytes.length < def.bytes) return null;
+  return def.parse(bytes.slice(0, def.bytes));
+}
+
+/**
+ * PIDs probed for a freeze frame when the ECU does not answer the Mode 02
+ * supported-PIDs bitmap (02 00 00). These are the values SAE J1979 ECUs
+ * typically capture at the moment a DTC is set.
+ */
+export const FREEZE_FRAME_FALLBACK_IDS: string[] = [
+  'LOAD', 'ECT', 'STFT1', 'LTFT1', 'STFT2', 'LTFT2', 'FP', 'MAP', 'RPM', 'SPD', 'ADV', 'IAT', 'MAF', 'TPS',
+];
+
+/**
+ * Parse a "supported PIDs" bitmap response (Mode 01 PIDs 00, 20, 40, 60, 80, A0, C0, E0,
+ * or the Mode 02 equivalent for freeze frame 00).
  * Each response covers 32 PIDs starting from baseHex+1.
  * Returns a list of supported hex PIDs (uppercase, two-digit).
  */
-export function parseSupportedPids(raw: string, basePidHex: string): string[] {
-  const bytes = extractDataBytes(raw, `41${basePidHex.toUpperCase()}`);
+export function parseSupportedPids(raw: string, basePidHex: string, mode: '01' | '02' = '01'): string[] {
+  // Mode 01 reply: 41 <base> AA BB CC DD.
+  // Mode 02 reply: 42 <base> <frame> AA BB CC DD (frame byte echoed).
+  const marker = mode === '01' ? `41${basePidHex.toUpperCase()}` : `42${basePidHex.toUpperCase()}00`;
+  const bytes = extractDataBytes(raw, marker);
   if (!bytes || bytes.length < 4) return [];
   const baseNum = parseInt(basePidHex, 16);
   const supported: string[] = [];

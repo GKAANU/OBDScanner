@@ -54,6 +54,8 @@ export type FullReport = {
   pending: string[];
   permanent: string[];
   live?: LiveSnapshotRow[];
+  /** Freeze frame 00: the DTC that triggered it and the captured values. */
+  freezeFrame?: { dtc: string; rows: LiveSnapshotRow[] };
   readiness?: Array<{ name: string; supported: boolean; ready: boolean }>;
 };
 
@@ -84,6 +86,14 @@ export function formatFullReport(r: FullReport): string {
   lines.push('');
   lines.push(formatDTCList(r.permanent, 'Kalıcı hata kodları (Mode 0A)'));
   lines.push('');
+
+  if (r.freezeFrame) {
+    lines.push(`Anlık görüntü (Mode 02, kaydeden kod: ${r.freezeFrame.dtc})`);
+    for (const row of r.freezeFrame.rows) {
+      lines.push(`  ${row.label}: ${formatValue(row.value, row.unit)}`);
+    }
+    lines.push('');
+  }
 
   if (r.readiness && r.readiness.length > 0) {
     lines.push('Hazırlık izleyicileri');

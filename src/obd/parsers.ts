@@ -69,14 +69,41 @@ function decodeDTCList(data: string): string[] {
   for (let i = 0; i + 4 <= data.length; i += 4) {
     const chunk = data.substring(i, i + 4);
     if (chunk === '0000') break;
-    const firstByte = parseInt(chunk.substring(0, 2), 16);
-    if (isNaN(firstByte)) continue;
-    const type = TYPE_CHAR[(firstByte >> 6) & 0b11];
-    const d2 = (firstByte >> 4) & 0b11;
-    const d3 = (firstByte & 0x0f).toString(16).toUpperCase();
-    dtcs.push(`${type}${d2}${d3}${chunk.substring(2, 4)}`);
+    const code = decodeDTCHex(chunk);
+    if (code) dtcs.push(code);
   }
   return dtcs;
+}
+
+/**
+ * Decode one 2-byte DTC (4 hex chars, e.g. "0420") into its canonical form
+ * ("P0420"). Returns null for malformed input or the "no code" value 0000.
+ */
+export function decodeDTCHex(hex4: string): string | null {
+  if (!/^[0-9A-F]{4}$/i.test(hex4)) return null;
+  const chunk = hex4.toUpperCase();
+  if (chunk === '0000') return null;
+  const firstByte = parseInt(chunk.substring(0, 2), 16);
+  const type = TYPE_CHAR[(firstByte >> 6) & 0b11];
+  const d2 = (firstByte >> 4) & 0b11;
+  const d3 = (firstByte & 0x0f).toString(16).toUpperCase();
+  return `${type}${d2}${d3}${chunk.substring(2, 4)}`;
+}
+
+/**
+ * Parse a Mode 02 PID 02 response: the DTC that caused the given freeze
+ * frame to be stored.
+ *
+ * Request `02 02 00` -> response `42 02 00 AA BB`, where `00` is the echoed
+ * frame number and AABB is the DTC. `0000` means no freeze frame is stored.
+ * Returns the DTC ("P0133") or null when there is no frame / no response.
+ */
+export function parseFreezeFrameDTC(raw: string, frame = '00'): string | null {
+  const clean = normalize(raw);
+  const marker = `4202${frame.toUpperCase()}`;
+  const idx = clean.indexOf(marker);
+  if (idx === -1) return null;
+  return decodeDTCHex(clean.substring(idx + marker.length, idx + marker.length + 4));
 }
 
 /**

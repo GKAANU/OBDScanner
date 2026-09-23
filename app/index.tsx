@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar as ConnStatusBar } from '../src/ui/StatusBar';
 import { CopyButton } from '../src/ui/CopyButton';
-import { DtcCard } from '../src/ui/DtcCard';
+import { DtcCard, type FreezeFrameState } from '../src/ui/DtcCard';
 import { useOBD } from '../src/obd/context';
 import { parseDTCs, parseReadiness, parseMode09Ascii, parseVIN, parseCVN } from '../src/obd/parsers';
 import { colors, fonts, fontSize, radius, spacing } from '../src/ui/theme';
@@ -25,6 +25,17 @@ export default function TaniScreen() {
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastScanAt, setLastScanAt] = useState<string | null>(null);
+  const [freezeFrame, setFreezeFrame] = useState<FreezeFrameState>({ status: 'idle' });
+
+  const loadFreezeFrame = useCallback(async () => {
+    if (state !== 'ready') return;
+    setFreezeFrame({ status: 'loading' });
+    try {
+      setFreezeFrame({ status: 'loaded', frame: await client.readFreezeFrame() });
+    } catch {
+      setFreezeFrame({ status: 'error', message: 'Anlık görüntü okunamadı. Tekrar dene.' });
+    }
+  }, [client, state]);
 
   const scan = useCallback(async () => {
     if (state !== 'ready') return;
@@ -35,6 +46,7 @@ export default function TaniScreen() {
       const pending = parseDTCs(await client.pendingDTCs());
       const permanent = parseDTCs(await client.permanentDTCs());
       setDtcs({ stored, pending, permanent });
+      setFreezeFrame({ status: 'idle' });
       setLastScanAt(formatTimestamp());
     } catch (e) {
       setScanError(e instanceof Error ? e.message : String(e));
@@ -75,8 +87,21 @@ export default function TaniScreen() {
         readiness = r.monitors.map((m) => ({ name: m.name, supported: m.supported, ready: m.ready }));
       }
     } catch {}
+    let ff = freezeFrame.status === 'loaded' ? freezeFrame.frame : null;
+    if (!ff) {
+      try {
+        ff = await client.readFreezeFrame();
+        setFreezeFrame({ status: 'loaded', frame: ff });
+      } catch {}
+    }
     return formatFullReport({
       vehicle: { vin, calId, cvn, ecuName },
+      freezeFrame: ff?.dtc
+        ? {
+            dtc: ff.dtc,
+            rows: ff.values.map(({ def, value }) => ({ label: def.label, value, unit: def.unit })),
+          }
+        : undefined,
       protocol: protocolName,
       battery,
       stored: dtcs.stored,
@@ -84,7 +109,7 @@ export default function TaniScreen() {
       permanent: dtcs.permanent,
       readiness,
     });
-  }, [client, state, dtcs, protocolName, battery]);
+  }, [client, state, dtcs, protocolName, battery, freezeFrame]);
 
   const [fullReport, setFullReport] = useState<string>('');
 
@@ -149,9 +174,9 @@ export default function TaniScreen() {
 
             {scanError ? <Text style={styles.error}>{scanError}</Text> : null}
 
-            <Section title="Saklanan (Mode 03)" codes={dtcs.stored} source="stored" />
-            <Section title="Bekleyen (Mode 07)" codes={dtcs.pending} source="pending" />
-            <Section title="Kalıcı (Mode 0A)" codes={dtcs.permanent} source="permanent" />
+            <Section title="Saklanan (Mode 03)" codes={dtcs.stored} source="stored" freezeFrame={freezeFrame} onRequestFreezeFrame={loadFreezeFrame} />
+            <Section title="Bekleyen (Mode 07)" codes={dtcs.pending} source="pending" freezeFrame={freezeFrame} onRequestFreezeFrame={loadFreezeFrame} />
+            <Section title="Kalıcı (Mode 0A)" codes={dtcs.permanent} source="permanent" freezeFrame={freezeFrame} onRequestFreezeFrame={loadFreezeFrame} />
 
             <View style={styles.reportBlock}>
               <Text style={styles.reportTitle}>Tüm raporu kopyala</Text>
@@ -194,10 +219,14 @@ function Section({
   title,
   codes,
   source,
+  freezeFrame,
+  onRequestFreezeFrame,
 }: {
   title: string;
   codes: string[];
   source: 'stored' | 'pending' | 'permanent';
+  freezeFrame: FreezeFrameState;
+  onRequestFreezeFrame: () => void;
 }) {
   return (
     <View style={{ gap: spacing.s }}>
@@ -205,7 +234,15 @@ function Section({
       {codes.length === 0 ? (
         <Text style={styles.empty}>Kod yok.</Text>
       ) : (
-        codes.map((c) => <DtcCard key={`${source}-${c}`} code={c} source={source} />)
+        codes.map((c) => (
+          <DtcCard
+            key={`${source}-${c}`}
+            code={c}
+            source={source}
+            freezeFrame={freezeFrame}
+            onRequestFreezeFrame={onRequestFreezeFrame}
+          />
+        ))
       )}
     </View>
   );

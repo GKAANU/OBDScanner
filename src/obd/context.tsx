@@ -10,6 +10,8 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OBDClient, type OBDConfig, DEFAULT_OBD_CONFIG } from './client';
 import { DEFAULT_LIVE_PIDS } from './pid-registry';
+import { userMessage } from './protocol';
+import { TcpTransport } from './transport-tcp';
 
 export type ConnectionState = 'idle' | 'connecting' | 'initializing' | 'ready' | 'error';
 
@@ -54,7 +56,13 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
         if (rawCfg) {
           const parsed = JSON.parse(rawCfg) as Partial<OBDConfig>;
           if (parsed.host && parsed.port) {
-            setConfigState({ host: parsed.host, port: parsed.port, timeoutMs: parsed.timeoutMs ?? 5000 });
+            setConfigState({
+              host: parsed.host,
+              port: parsed.port,
+              timeoutMs: parsed.timeoutMs ?? DEFAULT_OBD_CONFIG.timeoutMs,
+              slowEcu: !!parsed.slowEcu,
+              demo: !!parsed.demo,
+            });
           }
         }
         const rawPids = await AsyncStorage.getItem(STORAGE_KEYS.livePids);
@@ -91,13 +99,30 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const clearSession = useCallback(() => {
+    setBattery(null);
+    setProtocolName(null);
+    setAdapterVersion(null);
+  }, []);
+
+  // Link dropped without the user asking (dongle unplugged, Wi-Fi lost).
+  useEffect(() => {
+    const c = clientRef.current;
+    c.setDisconnectListener((err) => {
+      clearSession();
+      setErrorMessage(userMessage(err));
+      setState('error');
+    });
+    return () => c.setDisconnectListener(null);
+  }, [clearSession]);
+
   const connect = useCallback(async () => {
     const c = clientRef.current;
     if (c.isConnected()) return;
     setErrorMessage(null);
     setState('connecting');
     try {
-      await c.connect(config);
+      await c.connect(new TcpTransport(config.host, config.port), config);
       setState('initializing');
       await c.init();
       // Capture protocol + adapter version + battery for the status bar.
@@ -113,22 +138,21 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       } catch {}
       setState('ready');
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErrorMessage(translateError(msg));
+      setErrorMessage(userMessage(e));
       setState('error');
+      clearSession();
       try {
         c.disconnect();
       } catch {}
     }
-  }, [config]);
+  }, [config, clearSession]);
 
   const disconnect = useCallback(() => {
     clientRef.current.disconnect();
+    setErrorMessage(null);
     setState('idle');
-    setBattery(null);
-    setProtocolName(null);
-    setAdapterVersion(null);
-  }, []);
+    clearSession();
+  }, [clearSession]);
 
   // Periodic battery refresh while connected (every 30s).
   useEffect(() => {
@@ -187,17 +211,4 @@ export function useOBD(): Ctx {
   const ctx = useContext(OBDContext);
   if (!ctx) throw new Error('useOBD must be used inside OBDProvider');
   return ctx;
-}
-
-function translateError(msg: string): string {
-  if (/timeout/i.test(msg)) {
-    return 'Adaptör cevap vermedi. Wi-Fi bağlantısını ve dongle’ı kontrol et.';
-  }
-  if (/ECONNREFUSED/i.test(msg) || /connect/i.test(msg)) {
-    return 'Bağlanılamadı. Wi-Fi adı, IP ve port doğru mu?';
-  }
-  if (/UNABLE TO CONNECT/i.test(msg)) {
-    return 'Araç ECU’suna ulaşılamadı. Kontağı açıp tekrar dene.';
-  }
-  return msg;
 }

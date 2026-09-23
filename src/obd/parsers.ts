@@ -235,7 +235,9 @@ export function parseBatteryVoltage(raw: string): number | null {
 export function detectOBDError(raw: string): string | null {
   const upper = raw.toUpperCase();
   if (upper.includes('UNABLE TO CONNECT')) return 'UNABLE_TO_CONNECT';
-  if (upper.includes('BUS INIT')) return 'BUS_INIT_ERROR';
+  // "BUS INIT: ...OK" is a success banner on ISO 9141 / KWP; only the ERROR
+  // form (and the generic "BUS ERROR") is a failure.
+  if (/BUS INIT[:.\s]*ERROR/.test(upper) || upper.includes('BUS ERROR')) return 'BUS_INIT_ERROR';
   if (upper.includes('CAN ERROR')) return 'CAN_ERROR';
   if (upper.includes('STOPPED')) return 'STOPPED';
   if (upper.includes('NO DATA')) return 'NO_DATA';

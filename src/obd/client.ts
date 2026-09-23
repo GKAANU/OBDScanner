@@ -1,4 +1,5 @@
-import TcpSocket from 'react-native-tcp-socket';
+import type { Transport } from './transport';
+import { atstCommand, initProbeError, OBDError, recoveryAction, takeResponse } from './protocol';
 import {
   detectOBDError,
   parseBatteryVoltage,
@@ -20,7 +21,23 @@ import {
   type PIDDef,
 } from './pid-registry';
 
-export type OBDConfig = { host: string; port: number; timeoutMs?: number };
+export type OBDConfig = {
+  host: string;
+  port: number;
+  /** Default per-command timeout in ms (individual commands may override). */
+  timeoutMs?: number;
+  /** Slow ECU mode: send ATST96 on init and use longer command timeouts. */
+  slowEcu?: boolean;
+  /** Demo mode: talk to the built-in simulator instead of a real dongle. */
+  demo?: boolean;
+};
+
+export type SendOptions = {
+  /** Override the default timeout for this command. */
+  timeoutMs?: number;
+  /** Apply STOPPED / BUS INIT recovery (default true). The Terminal disables it. */
+  recover?: boolean;
+};
 
 export type FreezeFrameValue = { def: PIDDef; value: number | string };
 
@@ -55,111 +72,170 @@ export const DEFAULT_OBD_CONFIG: OBDConfig = {
   host: '192.168.0.10',
   port: 35000,
   timeoutMs: 5000,
+  slowEcu: false,
+  demo: false,
 };
 
+/** Host-side timeout floor used while slow ECU mode is on. */
+const SLOW_ECU_TIMEOUT_MS = 10000;
+
 /**
- * Single-flight TCP client for ELM327-class Wi-Fi OBD-II dongles.
+ * Single-flight client for ELM327-class OBD-II adapters.
  *
  * Notes:
- *  - The ELM327 terminates every response with the prompt char `>`. We resolve
- *    the in-flight command only when we see that.
- *  - We never overlap commands; clone dongles freeze when sent a second
- *    command before `>` arrives.
- *  - This client never makes any network calls except to the configured host.
+ *  - The ELM327 terminates every response with the prompt char `>`. A command
+ *    resolves only when that prompt arrives; bytes after it are kept.
+ *  - Commands are queued and never overlap; clone dongles freeze when sent a
+ *    second command before `>` arrives.
+ *  - Transport-agnostic: TCP for real dongles, an in-memory simulator for
+ *    demo mode. The client itself does no I/O besides the transport.
  */
 export class OBDClient {
-  // The TcpSocket types are loose; we treat the socket as unknown-shaped.
-  private socket: any = null;
+  private transport: Transport | null = null;
   private buffer = '';
-  private resolveCurrent: ((data: string) => void) | null = null;
-  private rejectCurrent: ((err: Error) => void) | null = null;
-  private currentTimer: ReturnType<typeof setTimeout> | null = null;
+  private pending: {
+    resolve: (data: string) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+  private queue: Promise<unknown> = Promise.resolve();
+  private defaultTimeoutMs = DEFAULT_OBD_CONFIG.timeoutMs ?? 5000;
+  private slowEcu = false;
+  private disconnectListener: ((err: Error) => void) | null = null;
 
-  async connect(config: OBDConfig = DEFAULT_OBD_CONFIG): Promise<void> {
-    if (this.socket) {
-      throw new Error('Already connected');
-    }
-    return new Promise((resolve, reject) => {
-      try {
-        const sock = TcpSocket.createConnection(
-          { host: config.host, port: config.port },
-          () => resolve()
-        );
-        this.socket = sock;
-        sock.on('data', (data: Buffer | string) => {
-          const chunk = typeof data === 'string' ? data : data.toString('utf8');
-          this.buffer += chunk;
-          if (this.buffer.includes('>')) {
-            const response = this.buffer.replace('>', '').trim();
-            this.buffer = '';
-            if (this.resolveCurrent) {
-              const r = this.resolveCurrent;
-              this.clearCurrent();
-              r(response);
-            }
-          }
-        });
-        sock.on('error', (err: Error) => {
-          if (this.rejectCurrent) {
-            const rj = this.rejectCurrent;
-            this.clearCurrent();
-            rj(err);
-          } else {
-            reject(err);
-          }
-        });
-        sock.on('close', () => {
-          this.socket = null;
-        });
-      } catch (e) {
-        reject(e as Error);
-      }
-    });
+  /**
+   * Called when the link drops without disconnect() being called
+   * (dongle powered off, Wi-Fi lost, socket error).
+   */
+  setDisconnectListener(listener: ((err: Error) => void) | null): void {
+    this.disconnectListener = listener;
   }
 
-  private clearCurrent(): void {
-    this.resolveCurrent = null;
-    this.rejectCurrent = null;
-    if (this.currentTimer) {
-      clearTimeout(this.currentTimer);
-      this.currentTimer = null;
+  async connect(transport: Transport, config: Pick<OBDConfig, 'timeoutMs' | 'slowEcu'> = {}): Promise<void> {
+    if (this.transport) throw new Error('Already connected');
+    this.slowEcu = !!config.slowEcu;
+    const base = config.timeoutMs ?? DEFAULT_OBD_CONFIG.timeoutMs ?? 5000;
+    this.defaultTimeoutMs = this.slowEcu ? Math.max(base, SLOW_ECU_TIMEOUT_MS) : base;
+    this.buffer = '';
+
+    await transport.open({
+      onData: (chunk) => {
+        if (this.transport !== transport) return;
+        this.onData(chunk);
+      },
+      onClose: (error) => {
+        // Ignore closes of a transport we already dropped via disconnect().
+        if (this.transport !== transport) return;
+        this.transport = null;
+        this.buffer = '';
+        const err = new OBDError('CONNECTION_CLOSED', error?.message ?? 'Connection closed');
+        this.failPending(err);
+        this.disconnectListener?.(err);
+      },
+    });
+    this.transport = transport;
+  }
+
+  private onData(chunk: string): void {
+    this.buffer += chunk;
+    for (;;) {
+      const { response, rest } = takeResponse(this.buffer);
+      if (response === null) return;
+      this.buffer = rest;
+      const p = this.pending;
+      if (p) {
+        this.pending = null;
+        clearTimeout(p.timer);
+        p.resolve(response);
+      }
+      // A prompt with nothing in flight (e.g. a late reply after a timeout)
+      // is discarded.
     }
+  }
+
+  private failPending(err: Error): void {
+    const p = this.pending;
+    if (!p) return;
+    this.pending = null;
+    clearTimeout(p.timer);
+    p.reject(err);
   }
 
   /**
-   * Send a single AT or OBD command. Resolves with the raw text response
-   * (sans trailing `>`). Rejects on timeout, socket error, or if another
-   * command is in flight.
+   * Send one AT or OBD command and resolve with the raw response text (sans
+   * trailing `>`). Commands are queued; this never overlaps two commands on
+   * the wire. Applies STOPPED / BUS INIT recovery unless `recover: false`.
    */
-  async send(command: string, timeoutMs = 5000): Promise<string> {
-    if (!this.socket) throw new Error('Not connected');
-    if (this.resolveCurrent) throw new Error('Another command in flight');
+  send(command: string, options: SendOptions | number = {}): Promise<string> {
+    const opts: SendOptions = typeof options === 'number' ? { timeoutMs: options } : options;
+    const requested = opts.timeoutMs ?? this.defaultTimeoutMs;
+    const timeoutMs = this.slowEcu ? Math.max(requested, this.defaultTimeoutMs) : requested;
+    const run = this.queue.then(() => this.sendWithRecovery(command, timeoutMs, opts.recover !== false));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async sendWithRecovery(command: string, timeoutMs: number, recover: boolean): Promise<string> {
+    const raw = await this.sendOnce(command, timeoutMs);
+    if (!recover) return raw;
+    switch (recoveryAction(raw, 0)) {
+      case 'retry':
+        return this.sendOnce(command, timeoutMs);
+      case 'reprotocol':
+        await this.sendOnce('ATSP0', timeoutMs);
+        // Auto-detect runs again on the next OBD request: allow extra time.
+        return this.sendOnce(command, Math.max(timeoutMs, 8000));
+      default:
+        return raw;
+    }
+  }
+
+  private sendOnce(command: string, timeoutMs: number): Promise<string> {
+    const transport = this.transport;
+    if (!transport) return Promise.reject(new OBDError('NOT_CONNECTED', 'Not connected'));
     return new Promise<string>((resolve, reject) => {
-      this.resolveCurrent = resolve;
-      this.rejectCurrent = reject;
-      this.currentTimer = setTimeout(() => {
-        if (this.resolveCurrent) {
-          this.clearCurrent();
-          reject(new Error(`Timeout waiting for response to: ${command}`));
+      const timer = setTimeout(() => {
+        if (this.pending?.timer === timer) {
+          this.pending = null;
+          reject(new OBDError('TIMEOUT', `Timeout waiting for response to: ${command}`));
         }
       }, timeoutMs);
+      this.pending = { resolve, reject, timer };
       try {
-        this.socket.write(command + '\r');
+        transport.write(command + '\r');
       } catch (e) {
-        this.clearCurrent();
-        reject(e as Error);
+        this.failPending(e instanceof Error ? e : new Error(String(e)));
       }
     });
   }
 
+  /**
+   * ELM327 init sequence. Throws an OBDError if the vehicle does not answer
+   * the 0100 probe (ignition off, wrong protocol, no ECU).
+   */
   async init(): Promise<void> {
     await this.send('ATZ', 3000);
     await this.send('ATE0');
     await this.send('ATL0');
     await this.send('ATS0');
     await this.send('ATH0');
+    if (this.slowEcu) await this.setAdapterTimeout(600);
     await this.send('ATSP0');
-    await this.send('0100', 8000);
+    const probe = await this.send('0100', 8000);
+    const err = initProbeError(probe);
+    if (err) {
+      throw new OBDError(err as 'UNABLE_TO_CONNECT' | 'BUS_INIT_ERROR' | 'CAN_ERROR' | 'NO_DATA', `0100 -> ${probe}`);
+    }
+  }
+
+  /** Set the adapter's ECU response timeout (ATST) for slow ECUs. */
+  setAdapterTimeout(ms: number): Promise<string> {
+    return this.send(atstCommand(ms));
+  }
+
+  /** Label of the current transport endpoint, or null when disconnected. */
+  endpointLabel(): string | null {
+    return this.transport?.label ?? null;
   }
 
   // ---------------------------------------------------------------------
@@ -291,18 +367,16 @@ export class OBDClient {
     return { frame, dtc, values };
   }
 
+  /** User-initiated disconnect. Does not fire the disconnect listener. */
   disconnect(): void {
-    try {
-      this.socket?.destroy();
-    } catch {
-      // ignore
-    }
-    this.socket = null;
+    const t = this.transport;
+    this.transport = null;
     this.buffer = '';
-    this.clearCurrent();
+    this.failPending(new OBDError('CONNECTION_CLOSED', 'Disconnected'));
+    t?.close();
   }
 
   isConnected(): boolean {
-    return !!this.socket;
+    return !!this.transport;
   }
 }

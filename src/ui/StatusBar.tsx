@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View, Modal, TextInput, Alert } from 'react-native';
+import { Pressable, StyleSheet, Switch, Text, View, Modal, TextInput, Alert } from 'react-native';
 import { colors, fonts, fontSize, radius, spacing } from './theme';
 import { useOBD } from '../obd/context';
+import { userMessage } from '../obd/protocol';
 
 export function StatusBar() {
   const { state, config, protocolName, battery, errorMessage, connect, disconnect, setConfig, client } =
@@ -36,7 +37,7 @@ export function StatusBar() {
       Alert.alert('Geçersiz host', 'Host boş olamaz.');
       return;
     }
-    setConfig({ host: hostInput.trim(), port, timeoutMs: config.timeoutMs });
+    setConfig({ ...config, host: hostInput.trim(), port });
     setSettingsOpen(false);
   };
 
@@ -54,7 +55,7 @@ export function StatusBar() {
               await client.clearDTCs();
               Alert.alert('Tamam', 'Hata kodları silindi. Birkaç sürüş döngüsü sonrası kontrol et.');
             } catch (e) {
-              Alert.alert('Hata', e instanceof Error ? e.message : String(e));
+              Alert.alert('Hata', userMessage(e));
             }
           },
         },
@@ -109,6 +110,19 @@ export function StatusBar() {
               style={styles.input}
             />
 
+            <View style={styles.flagRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.flagLabel}>Yavaş ECU modu</Text>
+                <Text style={styles.flagHint}>
+                  Eski / yavaş ECU’lar için (ATST 96, uzun zaman aşımı). Sonraki bağlantıda geçerli.
+                </Text>
+              </View>
+              <Switch
+                value={!!config.slowEcu}
+                onValueChange={(v) => setConfig({ ...config, slowEcu: v })}
+              />
+            </View>
+
             <View style={styles.buttonRow}>
               <Pressable onPress={onSave} style={[styles.btn, styles.btnPrimary]}>
                 <Text style={styles.btnPrimaryLabel}>Kaydet</Text>
@@ -153,6 +167,23 @@ export function StatusBar() {
 }
 
 const styles = StyleSheet.create({
+  flagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.m,
+    marginTop: spacing.m,
+  },
+  flagLabel: {
+    color: colors.body,
+    fontFamily: fonts.bodyMedium,
+    fontSize: fontSize.m,
+  },
+  flagHint: {
+    color: colors.muted,
+    fontFamily: fonts.body,
+    fontSize: fontSize.xs,
+    marginTop: 2,
+  },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',

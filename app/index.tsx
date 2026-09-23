@@ -13,6 +13,7 @@ import { StatusBar as ConnStatusBar } from '../src/ui/StatusBar';
 import { CopyButton } from '../src/ui/CopyButton';
 import { DtcCard, type FreezeFrameState } from '../src/ui/DtcCard';
 import { useOBD } from '../src/obd/context';
+import { userMessage } from '../src/obd/protocol';
 import { colors, fonts, fontSize, radius, spacing } from '../src/ui/theme';
 import { formatFullReport, formatTimestamp } from '../src/utils/format';
 
@@ -48,7 +49,7 @@ export default function TaniScreen() {
       setFreezeFrame({ status: 'idle' });
       setLastScanAt(formatTimestamp());
     } catch (e) {
-      setScanError(e instanceof Error ? e.message : String(e));
+      setScanError(userMessage(e));
     } finally {
       setScanning(false);
     }

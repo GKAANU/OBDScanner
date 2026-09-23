@@ -38,7 +38,8 @@ export default function TerminalScreen() {
     setBusy(true);
     setInput('');
     try {
-      const raw = await client.send(cmd);
+      // Raw terminal: no automatic STOPPED / BUS INIT recovery.
+      const raw = await client.send(cmd, { recover: false });
       pushEntry(setHistory, {
         id: `${Date.now()}`,
         command: cmd,

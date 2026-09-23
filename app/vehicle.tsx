@@ -12,6 +12,7 @@ import { StatusBar as ConnStatusBar } from '../src/ui/StatusBar';
 import { CopyButton } from '../src/ui/CopyButton';
 import { ReadinessGrid } from '../src/ui/ReadinessGrid';
 import { useOBD } from '../src/obd/context';
+import { userMessage } from '../src/obd/protocol';
 import type { ReadinessReport } from '../src/obd/parsers';
 import { PID_BY_HEX } from '../src/obd/pid-registry';
 import { colors, fonts, fontSize, radius, spacing } from '../src/ui/theme';
@@ -52,7 +53,7 @@ export default function VehicleScreen() {
       const all = await client.readSupportedPids();
       setSupportedPids(all);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(userMessage(e));
     } finally {
       setLoading(false);
     }

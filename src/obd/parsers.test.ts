@@ -165,6 +165,10 @@ describe('parseBatteryVoltage', () => {
   it('returns null when no number', () => {
     expect(parseBatteryVoltage('?')).toBeNull();
   });
+
+  it('parses clone replies without decimals', () => {
+    expect(parseBatteryVoltage('12V\r\r>')).toBe(12);
+  });
 });
 
 describe('detectOBDError', () => {

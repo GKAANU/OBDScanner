@@ -52,10 +52,16 @@ export class TcpTransport implements Transport {
           resolve();
         });
         this.socket = sock;
+        // ELM327 output is ASCII. latin1 maps every byte to one char, so a
+        // stray high byte from a clone or a chunk boundary cannot turn into
+        // U+FFFD and swallow neighbouring characters (as utf8 could).
+        sock.setEncoding('latin1');
         sock.on('data', (data: Buffer | string) => {
-          handlers.onData(typeof data === 'string' ? data : data.toString('utf8'));
+          handlers.onData(typeof data === 'string' ? data : data.toString('latin1'));
         });
-        sock.on('error', (err: Error) => {
+        // The iOS native side emits the error as a plain string, not an Error.
+        sock.on('error', (raw: unknown) => {
+          const err = raw instanceof Error ? raw : new Error(String(raw));
           if (!opened) fail(new OBDError('CONNECT_FAILED', err.message));
           else notifyClose(err);
         });

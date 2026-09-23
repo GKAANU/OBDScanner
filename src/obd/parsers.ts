@@ -213,7 +213,8 @@ export function parseReadiness(raw: string): ReadinessReport | null {
  * Returns null if no number is present.
  */
 export function parseBatteryVoltage(raw: string): number | null {
-  const m = raw.match(/(\d+\.\d+)\s*V?/i);
+  // "12.6V", "12.6", and clones that drop the decimals ("12V").
+  const m = raw.match(/(\d+\.\d+)/) ?? raw.match(/(\d+)\s*V/i);
   if (!m) return null;
   const v = parseFloat(m[1]);
   return isNaN(v) ? null : v;

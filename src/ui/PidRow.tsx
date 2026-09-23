@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
+import { copyText } from './clipboard';
 import { colors, fonts, fontSize, radius, spacing } from './theme';
 import type { PIDDef } from '../obd/pid-registry';
 import { formatValue } from '../utils/format';
@@ -15,11 +15,11 @@ type Props = {
 
 export function PidRow({ def, value, rawHex, min, max }: Props) {
   const display = formatValue(value, def.unit);
-  const copyText = `${def.label}: ${display}`;
+  const copyLine = `${def.label}: ${display}`;
 
   const onLongPress = useCallback(async () => {
-    await Clipboard.setStringAsync(copyText);
-  }, [copyText]);
+    await copyText(copyLine);
+  }, [copyLine]);
 
   return (
     <Pressable onLongPress={onLongPress} delayLongPress={300} style={styles.row}>

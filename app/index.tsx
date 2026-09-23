@@ -105,11 +105,20 @@ export default function TaniScreen() {
   }, [client, state, dtcs, protocolName, battery, freezeFrame]);
 
   const [fullReport, setFullReport] = useState<string>('');
+  const [preparing, setPreparing] = useState(false);
 
   const onPrepareFullReport = useCallback(async () => {
-    const text = await buildFullReport();
-    setFullReport(text);
-  }, [buildFullReport]);
+    if (preparing) return;
+    setPreparing(true);
+    setScanError(null);
+    try {
+      setFullReport(await buildFullReport());
+    } catch (e) {
+      setScanError(userMessage(e));
+    } finally {
+      setPreparing(false);
+    }
+  }, [buildFullReport, preparing]);
 
   const allCodes = [
     ...dtcs.stored.map((c) => `${c} (saklanan)`),
@@ -191,8 +200,16 @@ export default function TaniScreen() {
                 VIN, ECU, hazırlık izleyicileri ve tüm DTC’leri tek metin olarak hazırla.
               </Text>
               <View style={styles.reportRow}>
-                <Pressable onPress={() => void onPrepareFullReport()} style={styles.reportBtn}>
-                  <Text style={styles.reportBtnLabel}>Hazırla</Text>
+                <Pressable
+                  onPress={() => void onPrepareFullReport()}
+                  disabled={preparing}
+                  style={[styles.reportBtn, preparing && styles.scanBtnDisabled]}
+                >
+                  {preparing ? (
+                    <ActivityIndicator color={colors.body} />
+                  ) : (
+                    <Text style={styles.reportBtnLabel}>Hazırla</Text>
+                  )}
                 </Pressable>
                 {fullReport ? (
                   <CopyButton text={fullReport} label="Raporu kopyala" variant="primary" />

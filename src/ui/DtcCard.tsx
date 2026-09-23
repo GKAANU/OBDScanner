@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, ActivityIndicator } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
+import { copyText } from './clipboard';
 import { colors, fonts, fontSize, radius, spacing } from './theme';
 import type { FreezeFrame } from '../obd/client';
 import { formatValue } from '../utils/format';
@@ -30,7 +30,7 @@ export function DtcCard({ code, source, freezeFrame, onRequestFreezeFrame }: Pro
   const [expanded, setExpanded] = useState(false);
 
   const onCopyCode = useCallback(async () => {
-    await Clipboard.setStringAsync(code);
+    await copyText(code);
   }, [code]);
 
   const onToggle = useCallback(() => {
@@ -85,7 +85,7 @@ function renderFrame(code: string, ff: FreezeFrameState): React.ReactNode {
               key={def.id}
               style={styles.frameRow}
               onLongPress={() => {
-                void Clipboard.setStringAsync(`${def.label}: ${text}`);
+                void copyText(`${def.label}: ${text}`);
               }}
             >
               <Text style={styles.frameLabel}>{def.label}</Text>

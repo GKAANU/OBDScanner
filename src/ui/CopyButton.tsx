@@ -1,6 +1,6 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import * as Clipboard from 'expo-clipboard';
+import { copyText } from './clipboard';
 import { colors, fonts, fontSize, radius, spacing } from './theme';
 
 type Props = {
@@ -11,14 +11,12 @@ type Props = {
 };
 
 export function CopyButton({ text, label = 'Kopyala', variant = 'ghost', compact = false }: Props) {
-  const [copied, setCopied] = useState(false);
+  const [copied, flash] = useCopiedFlash(1500);
 
   const onPress = useCallback(async () => {
     if (!text) return;
-    await Clipboard.setStringAsync(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }, [text]);
+    if (await copyText(text)) flash();
+  }, [text, flash]);
 
   return (
     <Pressable
@@ -51,12 +49,10 @@ export function CopyableValue({
   children: React.ReactNode;
   style?: any;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, flash] = useCopiedFlash(1200);
   const onLongPress = useCallback(async () => {
-    await Clipboard.setStringAsync(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  }, [text]);
+    if (await copyText(text)) flash();
+  }, [text, flash]);
   return (
     <Pressable onLongPress={onLongPress} delayLongPress={300}>
       <View style={style}>{children}</View>
@@ -65,6 +61,24 @@ export function CopyableValue({
       ) : null}
     </Pressable>
   );
+}
+
+/** "Kopyalandı" flag that resets after `ms`; the timer is cleared on unmount. */
+function useCopiedFlash(ms: number): [boolean, () => void] {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    []
+  );
+  const flash = useCallback(() => {
+    setCopied(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), ms);
+  }, [ms]);
+  return [copied, flash];
 }
 
 const styles = StyleSheet.create({

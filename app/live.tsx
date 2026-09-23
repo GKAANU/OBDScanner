@@ -34,8 +34,14 @@ export default function LiveScreen() {
   const { state, client, selectedLivePids, setSelectedLivePids } = useOBD();
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [pickerOpen, setPickerOpen] = useState(false);
-  const pollingRef = useRef(false);
+  // Each started loop owns a generation number; bumping genRef stops it.
+  // Only the loop whose generation is current may run, so loops never pile up.
+  const genRef = useRef(0);
   const focusedRef = useRef(false);
+  const idsRef = useRef<string[]>(selectedLivePids);
+  const stateRef = useRef(state);
+  idsRef.current = selectedLivePids;
+  stateRef.current = state;
 
   // Reset min/max for newly selected pids.
   useEffect(() => {
@@ -52,75 +58,87 @@ export default function LiveScreen() {
     });
   }, [selectedLivePids]);
 
-  const startPolling = useCallback(async () => {
-    if (pollingRef.current) return;
-    pollingRef.current = true;
-    while (pollingRef.current && focusedRef.current && state === 'ready') {
-      const ids = selectedLivePids;
-      if (ids.length === 0) {
-        await delay(200);
-        continue;
-      }
-      for (const id of ids) {
-        if (!pollingRef.current || !focusedRef.current) break;
-        if (!PID_BY_ID[id]) continue;
-        try {
-          const reading = await client.readPid(id);
-          const raw = reading.raw;
-          if (reading.status === 'unsupported') {
-            setRows((prev) => ({
-              ...prev,
-              [id]: { ...(prev[id] ?? blank()), value: null, unsupported: true, rawHex: raw },
-            }));
-            continue;
-          }
-          const parsed = reading.status === 'ok' ? reading.value : null;
-          setRows((prev) => {
-            const cur = prev[id] ?? blank();
-            const num = typeof parsed === 'number' ? parsed : null;
-            const min = num != null ? (cur.min == null ? num : Math.min(cur.min, num)) : cur.min;
-            const max = num != null ? (cur.max == null ? num : Math.max(cur.max, num)) : cur.max;
-            return {
-              ...prev,
-              [id]: {
-                value: parsed,
-                rawHex: raw.trim().replace(/\s+/g, ' '),
-                min,
-                max,
-                unsupported: false,
-              },
-            };
-          });
-        } catch {
-          // Skip on error; keep last value.
+  const stopPolling = useCallback(() => {
+    genRef.current++;
+  }, []);
+
+  const startPolling = useCallback(() => {
+    const gen = ++genRef.current;
+    const alive = () =>
+      genRef.current === gen && focusedRef.current && stateRef.current === 'ready';
+    void (async () => {
+      while (alive()) {
+        const ids = idsRef.current;
+        if (ids.length === 0) {
+          await delay(200);
+          continue;
         }
+        for (const id of ids) {
+          if (!alive()) return;
+          // Skip PIDs deselected while this pass was running.
+          if (!PID_BY_ID[id] || !idsRef.current.includes(id)) continue;
+          try {
+            const reading = await client.readPid(id);
+            if (!alive()) return;
+            const raw = reading.raw;
+            if (reading.status === 'unsupported') {
+              setRows((prev) =>
+                prev[id]
+                  ? { ...prev, [id]: { ...prev[id], value: null, unsupported: true, rawHex: raw } }
+                  : prev
+              );
+              continue;
+            }
+            const parsed = reading.status === 'ok' ? reading.value : null;
+            setRows((prev) => {
+              const cur = prev[id];
+              if (!cur) return prev; // deselected meanwhile
+              const num = typeof parsed === 'number' ? parsed : null;
+              const min = num != null ? (cur.min == null ? num : Math.min(cur.min, num)) : cur.min;
+              const max = num != null ? (cur.max == null ? num : Math.max(cur.max, num)) : cur.max;
+              return {
+                ...prev,
+                [id]: {
+                  value: parsed,
+                  rawHex: raw.trim().replace(/\s+/g, ' '),
+                  min,
+                  max,
+                  unsupported: false,
+                },
+              };
+            });
+          } catch {
+            // Skip on error; keep last value. Back off briefly so a dead
+            // link does not spin.
+            await delay(250);
+          }
+        }
+        // Tiny breathing room so the JS thread can paint.
+        await delay(40);
       }
-      // Tiny breathing room so the JS thread can paint.
-      await delay(40);
-    }
-    pollingRef.current = false;
-  }, [client, selectedLivePids, state]);
+    })();
+  }, [client]);
 
   // Pause on blur, resume on focus (per CLAUDE.md §9: no background timers).
   useFocusEffect(
     useCallback(() => {
       focusedRef.current = true;
-      if (state === 'ready') void startPolling();
+      if (stateRef.current === 'ready') startPolling();
       return () => {
         focusedRef.current = false;
-        pollingRef.current = false;
+        stopPolling();
       };
-    }, [startPolling, state])
+    }, [startPolling, stopPolling])
   );
 
-  // Re-kick polling when state flips to ready.
+  // Start when the connection becomes ready, stop when it drops.
   useEffect(() => {
-    if (state === 'ready' && focusedRef.current) {
-      void startPolling();
-    } else {
-      pollingRef.current = false;
-    }
-  }, [state, startPolling]);
+    if (state === 'ready' && focusedRef.current) startPolling();
+    else stopPolling();
+  }, [state, startPolling, stopPolling]);
+
+  // Stop on unmount.
+  useEffect(() => stopPolling, [stopPolling]);
 
   const snapshotText = useMemo(() => {
     const items = selectedLivePids

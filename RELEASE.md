@@ -1,5 +1,80 @@
 # Releasing Otova to TestFlight and the App Store
 
+## TestFlight'ta test (kısa yol)
+
+Tüm komutlar `otova/` klasöründe çalışır. İki komut yeterli:
+
+```bash
+eas build --platform ios --profile production
+eas submit --platform ios --latest
+```
+
+**1. `eas build` sırasında sorulanlar**
+
+- *Log in to your Apple account?* → **Yes**. Apple ID, şifre ve iki adımlı
+  doğrulama kodunu gir.
+- Birden fazla takım varsa kendi Apple Developer takımını seç.
+- *Generate a new Apple Distribution Certificate?* → **Yes**.
+- *Generate a new Apple Provisioning Profile?* → **Yes**.
+- Bundle ID `com.otova.scanner` EAS tarafından otomatik kaydedilir. Build
+  numarası EAS'te tutulur ve her build'de kendiliğinden artar, elle bir şey
+  yapma. Build bulutta yaklaşık 15-25 dakika sürer.
+
+**2. `eas submit` sırasında sorulanlar**
+
+- *Log in to your Apple account?* → **Yes**.
+- *Generate a new App Store Connect API Key?* → **Yes** (EAS saklar, sonraki
+  gönderimlerde tekrar sormaz).
+- App Store Connect'te uygulama kaydı yoksa EAS oluşturmayı teklif eder:
+  ad olarak **Otova** gir (alınmışsa ör. "Otova OBD"), dil **Turkish**.
+- Şifreleme sorusu gelmez: `usesNonExemptEncryption: false` ayarlı.
+
+**3. Kendini dahili test kullanıcısı olarak ekle**
+
+1. <https://appstoreconnect.apple.com> → **Apps** → **Otova** → **TestFlight**.
+2. Build "Processing" durumundan çıkana kadar bekle (genelde 5-30 dk).
+3. Soldan **Internal Testing** yanındaki **+** ile bir grup oluştur
+   (ör. "Ben"), **Testers** altından kendi Apple ID'ni ekle, **Builds**
+   altından yeni build'i gruba ekle.
+
+**4. iPhone'a kur**
+
+1. App Store'dan **TestFlight** uygulamasını indir, aynı Apple ID ile giriş yap.
+2. Davet e-postasındaki bağlantıyı aç ya da TestFlight'ta Otova'yı bul →
+   **Yükle**.
+
+**5. Cihazda test listesi**
+
+- [ ] **Önce Demo modu:** Tanı sekmesinde "Adaptörün yok mu? Demo modunda
+      dene". Kodlar, anlık görüntü, Canlı, Araç ve Terminal dolu gelmeli.
+      Durum çubuğuna dokun → Kapat, sonra demo modunu kapat.
+- [ ] Adaptörü araca tak, **kontağı aç**.
+- [ ] iPhone Ayarlar → Wi-Fi → adaptörün ağına bağlan (genelde "WiFi_OBDII").
+      "İnternet bağlantısı yok" uyarısı normal, bu ağda kal.
+- [ ] Otova → **Bağlan**. İlk seferde iOS **Yerel Ağ** izni sorar →
+      **İzin Ver**. İlk deneme izin penceresi yüzünden başarısız olabilir;
+      tekrar **Bağlan**'a bas. İzni yanlışlıkla reddettiysen: Ayarlar →
+      Otova → Yerel Ağ.
+- [ ] Durum çubuğu "Hazır" olmalı, protokol ve akü voltajı görünmeli.
+      IP/port farklıysa durum çubuğuna dokunup değiştir (varsayılan
+      192.168.0.10:35000).
+- [ ] **Tanı:** saklanan / bekleyen / kalıcı kodlar; bir koda dokun →
+      anlık görüntü (freeze frame). "Tümünü kopyala" ve "Tüm raporu kopyala".
+- [ ] **Canlı:** motor çalışırken devir ve sıcaklık güncelleniyor mu; başka
+      sekmeye geçince okuma durmalı.
+- [ ] **Araç:** VIN, ECU adı, kalibrasyon ID, hazırlık izleyicileri, PID ızgarası.
+- [ ] **Terminal:** `ATRV`, `010C`, `03` gönder; "Bunu kopyala" ile gerçek
+      cevapları kaydet (bunlar test fikstürü olarak değerli).
+- [ ] Bağlıyken adaptörü çek veya kontağı kapat: uygulama donmamalı,
+      "Adaptörle bağlantı koptu..." göstermeli.
+
+**Adaptöre hiç bağlanamıyorsa** (Demo çalışıyor ama gerçek bağlantı
+çalışmıyorsa, IP/port ve Yerel Ağ izni doğruysa) sorun büyük ihtimalle
+`react-native-tcp-socket` ile New Architecture uyumudur: `app.json` içinde
+`"newArchEnabled": false` yap, iki komutu tekrar çalıştır.
+
+---
+
 All commands run from `otova/`. Nothing in this repo uploads anything by
 itself. Every step that needs your Apple or Expo account is listed here.
 
@@ -27,15 +102,17 @@ npx expo-doctor
 npx expo install --check
 ```
 
-Known expo-doctor note: `react-native-tcp-socket` is flagged "Untested on New
-Architecture" (`newArchEnabled: true`). Confirm the TCP connection works on a
-real device build (section 7). If it does, you can silence the check with:
+`react-native-tcp-socket` is excluded from expo-doctor's React Native
+Directory check (`package.json` > `expo.doctor`), because the directory marks
+it "Untested on New Architecture". It is a legacy module that runs through
+RN 0.81's interop layer. If the TCP connection does not work on a real device,
+set `"newArchEnabled": false` in `app.json` and rebuild.
 
-```json
-"expo": { "doctor": { "reactNativeDirectoryCheck": { "exclude": ["react-native-tcp-socket"] } } }
+Verify the JS bundle (no Xcode involved):
+
+```bash
+npx expo export --platform ios && rm -rf dist
 ```
-
-If it does not work, set `"newArchEnabled": false` in `app.json` and rebuild.
 
 ## 2. Log in and link the project to EAS
 
@@ -70,15 +147,17 @@ eas build --platform ios --profile production
   because it cannot be changed after the App Store Connect record exists.
 - Version: `expo.version` in `app.json` (currently `1.0.0`) is the marketing
   version. The build number is managed remotely by EAS (`appVersionSource:
-  remote`) and auto-increments on each production build.
-  `ios.buildNumber` in `app.json` is only used for local prebuilds.
+  remote`) and auto-increments on each production build. There is no
+  `ios.buildNumber` in `app.json` on purpose.
 - Export compliance is answered in config
   (`ios.config.usesNonExemptEncryption: false`). The app uses no encryption:
   plain TCP to the dongle, no HTTPS.
 
-Create the app record in App Store Connect (My Apps, +, New App): platform iOS,
+`submit.production` in `eas.json` is empty on purpose: `eas submit` asks for
+what it needs interactively and can create the App Store Connect record
+itself. Optionally, create the app record by hand in App Store Connect (My Apps, +, New App): platform iOS,
 name "Otova" (or whatever is available), primary language Turkish, bundle ID
-`com.otova.scanner`, and any SKU. Then fill in `eas.json`:
+`com.otova.scanner`, and any SKU. Then, to skip the prompts, fill in `eas.json`:
 
 ```json
 "submit": { "production": { "ios": {

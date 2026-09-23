@@ -43,6 +43,8 @@ const STORAGE_KEYS = {
 export function OBDProvider({ children }: { children: React.ReactNode }) {
   const clientRef = useRef<OBDClient>(new OBDClient());
   const connectingRef = useRef(false);
+  /** Bumped by every connect/disconnect; a connect attempt whose session is stale stops quietly. */
+  const sessionRef = useRef(0);
   const [config, setConfigState] = useState<OBDConfig>(DEFAULT_OBD_CONFIG);
   const [state, setState] = useState<ConnectionState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -123,6 +125,8 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     const c = clientRef.current;
     if (c.isConnected() || connectingRef.current) return;
     connectingRef.current = true;
+    const session = ++sessionRef.current;
+    const stale = () => sessionRef.current !== session;
     const cfg: OBDConfig = overrides ? { ...config, ...overrides } : config;
     if (overrides) setConfig(cfg);
     setErrorMessage(null);
@@ -131,21 +135,28 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       // Demo mode never opens a socket: it talks to the in-memory simulator.
       const transport = cfg.demo ? new DemoTransport() : new TcpTransport(cfg.host, cfg.port);
       await c.connect(transport, cfg);
+      if (stale()) return;
       setState('initializing');
       await c.init();
+      if (stale()) return;
       // Capture protocol + adapter version + battery for the status bar.
       try {
-        setProtocolName(await c.readProtocolName());
+        const name = await c.readProtocolName();
+        if (!stale()) setProtocolName(name);
       } catch {}
       try {
-        setAdapterVersion(await c.readAdapterVersion());
+        const ver = await c.readAdapterVersion();
+        if (!stale()) setAdapterVersion(ver);
       } catch {}
       try {
         const v = await c.readBatteryVoltage();
-        if (v != null) setBattery(v);
+        if (v != null && !stale()) setBattery(v);
       } catch {}
+      if (stale()) return;
       setState('ready');
     } catch (e) {
+      // The user pressed Kapat (or switched mode) mid-connect: not an error.
+      if (stale()) return;
       setErrorMessage(userMessage(e));
       setState('error');
       clearSession();
@@ -153,11 +164,13 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
         c.disconnect();
       } catch {}
     } finally {
-      connectingRef.current = false;
+      if (!stale()) connectingRef.current = false;
     }
   }, [config, setConfig, clearSession]);
 
   const disconnect = useCallback(() => {
+    sessionRef.current++;
+    connectingRef.current = false;
     clientRef.current.disconnect();
     setErrorMessage(null);
     setState('idle');

@@ -109,7 +109,11 @@ export function userMessage(err: unknown): string {
     return 'Araç cevap vermedi. Kontağı açıp tekrar dene.';
   }
   if (code === 'CONNECT_FAILED' || /ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|connect/i.test(msg)) {
-    return 'Adaptöre bağlanılamadı. Wi-Fi adı, IP ve port doğru mu?';
+    return (
+      'Adaptöre bağlanılamadı. Telefon adaptörün Wi-Fi ağına bağlı mı, IP ve port doğru mu? ' +
+      'İlk bağlantıda iOS yerel ağ izni sorar: izin verip tekrar dene. ' +
+      'İzni Ayarlar > Otova > Yerel Ağ bölümünden açabilirsin.'
+    );
   }
   return 'Beklenmeyen hata. Bağlantıyı kapatıp tekrar dene.';
 }

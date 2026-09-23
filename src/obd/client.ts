@@ -102,6 +102,8 @@ const RESYNC_PROBE = 'ATI';
  */
 export class OBDClient {
   private transport: Transport | null = null;
+  /** Transport whose open() is still in progress; disconnect() aborts it. */
+  private opening: Transport | null = null;
   private buffer = '';
   private pending: {
     resolve: (data: string) => void;
@@ -128,14 +130,31 @@ export class OBDClient {
   }
 
   async connect(transport: Transport, config: Pick<OBDConfig, 'timeoutMs' | 'slowEcu'> = {}): Promise<void> {
-    if (this.transport) throw new Error('Already connected');
+    if (this.transport || this.opening) throw new Error('Already connected');
     this.slowEcu = !!config.slowEcu;
     const base = config.timeoutMs ?? DEFAULT_OBD_CONFIG.timeoutMs ?? 5000;
     this.defaultTimeoutMs = this.slowEcu ? Math.max(base, SLOW_ECU_TIMEOUT_MS) : base;
     this.buffer = '';
     this.stale = false;
 
-    await transport.open({
+    this.opening = transport;
+    try {
+      await this.openTransport(transport);
+    } catch (e) {
+      if (this.opening === transport) this.opening = null;
+      throw e;
+    }
+    if (this.opening !== transport) {
+      // disconnect() was called while the link was opening.
+      transport.close();
+      throw new OBDError('CONNECTION_CLOSED', 'Disconnected while connecting');
+    }
+    this.opening = null;
+    this.transport = transport;
+  }
+
+  private openTransport(transport: Transport): Promise<void> {
+    return transport.open({
       onData: (chunk) => {
         if (this.transport !== transport) return;
         this.onData(chunk);
@@ -151,7 +170,6 @@ export class OBDClient {
         this.disconnectListener?.(err);
       },
     });
-    this.transport = transport;
   }
 
   private onData(chunk: string): void {
@@ -440,6 +458,9 @@ export class OBDClient {
 
   /** User-initiated disconnect. Does not fire the disconnect listener. */
   disconnect(): void {
+    const opening = this.opening;
+    this.opening = null;
+    opening?.close();
     const t = this.transport;
     this.transport = null;
     this.buffer = '';

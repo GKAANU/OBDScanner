@@ -254,6 +254,26 @@ describe('OBDClient disconnects', () => {
     expect(second.t.closed).toBe(true);
   });
 
+  it('aborts a connect that is still opening when disconnect() is called', async () => {
+    let finishOpen: () => void = () => {};
+    const t = new FakeTransport(() => ['OK>']);
+    t.open = (h) =>
+      new Promise<void>((resolve) => {
+        t.handlers = h;
+        finishOpen = resolve;
+      });
+    const c = new OBDClient();
+    const p = c.connect(t);
+    c.disconnect();
+    expect(t.closed).toBe(true);
+    finishOpen();
+    await expect(p).rejects.toMatchObject({ code: 'CONNECTION_CLOSED' });
+    expect(c.isConnected()).toBe(false);
+    // A fresh connect works afterwards.
+    await c.connect(new FakeTransport(() => ['OK>']));
+    await expect(c.send('ATI')).resolves.toBe('OK');
+  });
+
   it('rejects queued commands after disconnect', async () => {
     const { c } = await connected(() => ['OK>']);
     c.disconnect();

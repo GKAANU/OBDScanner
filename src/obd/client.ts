@@ -79,12 +79,22 @@ export const DEFAULT_OBD_CONFIG: OBDConfig = {
 /** Host-side timeout floor used while slow ECU mode is on. */
 const SLOW_ECU_TIMEOUT_MS = 10000;
 
+/** After a timeout: how long to wait for the late reply / the probe reply. */
+const RESYNC_GRACE_MS = 1500;
+/** After a timeout: silence required after the last prompt before resuming. */
+const RESYNC_QUIET_MS = 100;
+/** Harmless command used to flush the adapter when it stays silent. */
+const RESYNC_PROBE = 'ATI';
+
 /**
  * Single-flight client for ELM327-class OBD-II adapters.
  *
  * Notes:
  *  - The ELM327 terminates every response with the prompt char `>`. A command
- *    resolves only when that prompt arrives; bytes after it are kept.
+ *    resolves only when that prompt arrives. Bytes left over when the next
+ *    command is written are stale and dropped.
+ *  - After a timeout the next command first resyncs (see resync()) so a late
+ *    reply is never mistaken for the answer to a later command.
  *  - Commands are queued and never overlap; clone dongles freeze when sent a
  *    second command before `>` arrives.
  *  - Transport-agnostic: TCP for real dongles, an in-memory simulator for
@@ -99,6 +109,12 @@ export class OBDClient {
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
   private queue: Promise<unknown> = Promise.resolve();
+  /**
+   * Set when a command timed out: the adapter may still send that command's
+   * reply (and its `>`) later. The next command resyncs first so the late
+   * reply is never taken as its answer.
+   */
+  private stale = false;
   private defaultTimeoutMs = DEFAULT_OBD_CONFIG.timeoutMs ?? 5000;
   private slowEcu = false;
   private disconnectListener: ((err: Error) => void) | null = null;
@@ -117,6 +133,7 @@ export class OBDClient {
     const base = config.timeoutMs ?? DEFAULT_OBD_CONFIG.timeoutMs ?? 5000;
     this.defaultTimeoutMs = this.slowEcu ? Math.max(base, SLOW_ECU_TIMEOUT_MS) : base;
     this.buffer = '';
+    this.stale = false;
 
     await transport.open({
       onData: (chunk) => {
@@ -128,6 +145,7 @@ export class OBDClient {
         if (this.transport !== transport) return;
         this.transport = null;
         this.buffer = '';
+        this.stale = false;
         const err = new OBDError('CONNECTION_CLOSED', error?.message ?? 'Connection closed');
         this.failPending(err);
         this.disconnectListener?.(err);
@@ -148,8 +166,8 @@ export class OBDClient {
         clearTimeout(p.timer);
         p.resolve(response);
       }
-      // A prompt with nothing in flight (e.g. a late reply after a timeout)
-      // is discarded.
+      // A prompt with nothing in flight is discarded (late replies are
+      // normally absorbed by resync()).
     }
   }
 
@@ -190,13 +208,18 @@ export class OBDClient {
     }
   }
 
-  private sendOnce(command: string, timeoutMs: number): Promise<string> {
+  private async sendOnce(command: string, timeoutMs: number): Promise<string> {
+    if (this.stale) await this.resync(timeoutMs);
     const transport = this.transport;
-    if (!transport) return Promise.reject(new OBDError('NOT_CONNECTED', 'Not connected'));
+    if (!transport) throw new OBDError('NOT_CONNECTED', 'Not connected');
+    // The adapter is silent between a prompt and the next command, so any
+    // bytes still buffered belong to an earlier exchange: drop them.
+    this.buffer = '';
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.pending?.timer === timer) {
           this.pending = null;
+          this.stale = true;
           reject(new OBDError('TIMEOUT', `Timeout waiting for response to: ${command}`));
         }
       }, timeoutMs);
@@ -207,6 +230,54 @@ export class OBDClient {
         this.failPending(e instanceof Error ? e : new Error(String(e)));
       }
     });
+  }
+
+  /**
+   * Wait for the next `>` without sending anything. Resolves with the
+   * response text, or null if no prompt arrives within `ms`.
+   */
+  private waitForPrompt(ms: number): Promise<string | null> {
+    if (!this.transport) return Promise.reject(new OBDError('NOT_CONNECTED', 'Not connected'));
+    return new Promise<string | null>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pending?.timer === timer) {
+          this.pending = null;
+          resolve(null);
+        }
+      }, ms);
+      this.pending = { resolve, reject, timer };
+    });
+  }
+
+  /**
+   * Re-align request/response framing after a timeout.
+   *
+   * 1. Give the timed-out command a short grace period to finish; its late
+   *    reply is discarded.
+   * 2. If the adapter stays silent, send a harmless probe (ATI). Any byte
+   *    also interrupts an adapter that is still busy (it answers STOPPED).
+   * 3. Drain trailing prompts until the line is quiet, so an interrupted
+   *    probe that yields two prompts cannot leak into the next command.
+   *
+   * If the adapter never answers, `stale` stays set and the next command
+   * tries again.
+   */
+  private async resync(timeoutMs: number): Promise<void> {
+    const grace = Math.min(timeoutMs, RESYNC_GRACE_MS);
+    let got = await this.waitForPrompt(grace);
+    if (got === null) {
+      const transport = this.transport;
+      if (!transport) throw new OBDError('NOT_CONNECTED', 'Not connected');
+      this.buffer = '';
+      transport.write(RESYNC_PROBE + '\r');
+      got = await this.waitForPrompt(grace);
+      if (got === null) return;
+    }
+    while ((await this.waitForPrompt(RESYNC_QUIET_MS)) !== null) {
+      // discard
+    }
+    this.stale = false;
+    this.buffer = '';
   }
 
   /**
@@ -372,6 +443,7 @@ export class OBDClient {
     const t = this.transport;
     this.transport = null;
     this.buffer = '';
+    this.stale = false;
     this.failPending(new OBDError('CONNECTION_CLOSED', 'Disconnected'));
     t?.close();
   }

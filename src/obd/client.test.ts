@@ -69,9 +69,9 @@ describe('OBDClient framing and queue', () => {
     expect(t.overlaps).toBe(0);
   });
 
-  it('keeps bytes after the prompt for the next response', async () => {
-    // Adapter sends the second reply glued to the first prompt.
-    const { c } = await connected((cmd) => (cmd === 'A' ? ['one>two'] : ['>']));
+  it('drops stray bytes left after a prompt before the next command', async () => {
+    // Junk glued after the first prompt must not leak into B's answer.
+    const { c } = await connected((cmd) => (cmd === 'A' ? ['one>junk'] : ['two>']));
     expect(await c.send('A')).toBe('one');
     expect(await c.send('B')).toBe('two');
   });
@@ -87,6 +87,114 @@ describe('OBDClient framing and queue', () => {
     const { c } = await connected((cmd) => (cmd === 'SLOW' ? null : ['OK>']), 30);
     await expect(c.send('SLOW')).rejects.toBeInstanceOf(OBDError);
     await expect(c.send('ATI')).resolves.toBe('OK');
+  });
+});
+
+/**
+ * Adapter whose replies are delivered at explicit times (ms after the write),
+ * to model an ECU that answers after the host-side timeout.
+ */
+class TimedTransport implements Transport {
+  readonly label = 'timed';
+  handlers: TransportHandlers | null = null;
+  written: string[] = [];
+  constructor(private reply: (cmd: string, n: number) => Array<[number, string]>) {}
+  async open(h: TransportHandlers): Promise<void> {
+    this.handlers = h;
+  }
+  write(data: string): void {
+    const cmd = data.replace(/\r$/, '');
+    this.written.push(cmd);
+    const n = this.written.filter((w) => w === cmd).length;
+    for (const [at, chunk] of this.reply(cmd, n)) {
+      setTimeout(() => this.handlers?.onData(chunk), at);
+    }
+  }
+  close(): void {}
+}
+
+describe('OBDClient resync after timeout', () => {
+  it('does not hand a late reply to the next command', async () => {
+    // 010C times out at 50 ms; its reply arrives at 60 ms, before 0105's
+    // own reply (30 ms after its write) would.
+    const t = new TimedTransport((cmd) => {
+      if (cmd === '010C') return [[60, '41 0C 1A F8\r\r>']];
+      if (cmd === '0105') return [[30, '41 05 82\r\r>']];
+      return [[5, 'ELM327 v1.5\r\r>']];
+    });
+    const c = new OBDClient();
+    await c.connect(t, { timeoutMs: 50 });
+    await expect(c.send('010C')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    await expect(c.send('0105')).resolves.toBe('41 05 82');
+    // The late reply was absorbed, so no probe was needed.
+    expect(t.written).toEqual(['010C', '0105']);
+  });
+
+  it('discards a late reply split across chunks', async () => {
+    const t = new TimedTransport((cmd) => {
+      if (cmd === '03') return [[55, '43 01 '], [60, '33 00 00\r'], [65, '\r>']];
+      return [[30, `${cmd}-OK\r>`]];
+    });
+    const c = new OBDClient();
+    await c.connect(t, { timeoutMs: 50 });
+    await expect(c.send('03')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    await expect(c.send('0101')).resolves.toBe('0101-OK');
+  });
+
+  it('probes a silent adapter and drains the probe reply', async () => {
+    const t = new FakeTransport((cmd) => (cmd === 'LOST' ? null : [`${cmd}-R\r>`]));
+    const c = new OBDClient();
+    await c.connect(t, { timeoutMs: 30 });
+    await expect(c.send('LOST')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    await expect(c.send('0105')).resolves.toBe('0105-R');
+    expect(t.written).toEqual(['LOST', 'ATI', '0105']);
+  });
+
+  it('drains both prompts when the probe interrupts a busy adapter', async () => {
+    // Busy adapter: the probe yields STOPPED and then the probe's own reply.
+    const t = new TimedTransport((cmd) => {
+      if (cmd === 'BUSY') return [];
+      if (cmd === 'ATI') return [[5, 'STOPPED\r\r>'], [20, '?\r\r>']];
+      return [[5, `${cmd}-R\r>`]];
+    });
+    const c = new OBDClient();
+    await c.connect(t, { timeoutMs: 30 });
+    await expect(c.send('BUSY')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    await expect(c.send('0105')).resolves.toBe('0105-R');
+  });
+
+  it('keeps trying to resync while the adapter stays silent', async () => {
+    const t = new FakeTransport(() => null);
+    const c = new OBDClient();
+    await c.connect(t, { timeoutMs: 20 });
+    await expect(c.send('A')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    await expect(c.send('B')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    expect(t.written).toEqual(['A', 'ATI', 'B']);
+    await expect(c.send('C')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    expect(t.written).toEqual(['A', 'ATI', 'B', 'ATI', 'C']);
+  });
+
+  it('rejects with CONNECTION_CLOSED if the link drops during resync', async () => {
+    const t = new FakeTransport(() => null);
+    const c = new OBDClient();
+    await c.connect(t, { timeoutMs: 40 });
+    await expect(c.send('A')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    const p = c.send('B');
+    await new Promise((r) => setTimeout(r, 10));
+    t.drop();
+    await expect(p).rejects.toMatchObject({ code: 'CONNECTION_CLOSED' });
+  });
+
+  it('clears the stale state on disconnect', async () => {
+    const t = new FakeTransport((cmd) => (cmd === 'A' ? null : ['OK>']));
+    const c = new OBDClient();
+    await c.connect(t, { timeoutMs: 30 });
+    await expect(c.send('A')).rejects.toMatchObject({ code: 'TIMEOUT' });
+    c.disconnect();
+    const t2 = new FakeTransport(() => ['OK>']);
+    await c.connect(t2, { timeoutMs: 30 });
+    await expect(c.send('ATI')).resolves.toBe('OK');
+    expect(t2.written).toEqual(['ATI']);
   });
 });
 

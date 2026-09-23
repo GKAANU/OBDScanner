@@ -1,5 +1,17 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Switch, Text, View, Modal, TextInput, Alert } from 'react-native';
+import {
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { colors, fonts, fontSize, radius, spacing } from './theme';
 import { useOBD } from '../obd/context';
 import { userMessage } from '../obd/protocol';
@@ -27,18 +39,34 @@ export function StatusBar() {
     setSettingsOpen(true);
   };
 
-  const onSave = () => {
+  /** Validate the host/port fields; shows an alert and returns null when invalid. */
+  const readEndpoint = (): { host: string; port: number } | null => {
     const port = parseInt(portInput, 10);
     if (isNaN(port) || port <= 0 || port > 65535) {
       Alert.alert('Geçersiz port', 'Port 1-65535 arasında bir sayı olmalı.');
-      return;
+      return null;
     }
     if (!hostInput.trim()) {
       Alert.alert('Geçersiz host', 'Host boş olamaz.');
-      return;
+      return null;
     }
-    setConfig({ ...config, host: hostInput.trim(), port });
+    return { host: hostInput.trim(), port };
+  };
+
+  const onSave = () => {
+    const ep = readEndpoint();
+    if (!ep) return;
+    setConfig({ ...config, ...ep });
     setSettingsOpen(false);
+  };
+
+  const onConnect = () => {
+    // Use what is typed in the fields, even if Kaydet was not pressed.
+    const ep = readEndpoint();
+    if (!ep) return;
+    Keyboard.dismiss();
+    setSettingsOpen(false);
+    void connect(ep);
   };
 
   const onClearDTCs = () => {
@@ -84,8 +112,19 @@ export function StatusBar() {
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
 
       <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
+        <KeyboardAvoidingView
+          style={styles.kav}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
         <Pressable style={styles.backdrop} onPress={() => setSettingsOpen(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+          <Pressable
+            style={styles.sheet}
+            onPress={(e) => {
+              // Tapping the sheet closes the keyboard (number-pad has no return key).
+              e.stopPropagation();
+              Keyboard.dismiss();
+            }}
+          >
             <Text style={styles.sheetTitle}>Bağlantı ayarları</Text>
 
             <View style={styles.flagRow}>
@@ -111,6 +150,7 @@ export function StatusBar() {
               autoCapitalize="none"
               autoCorrect={false}
               keyboardType="numbers-and-punctuation"
+              returnKeyType="done"
               placeholder="192.168.0.10"
               placeholderTextColor={colors.muted}
               style={styles.input}
@@ -144,13 +184,7 @@ export function StatusBar() {
                 <Text style={styles.btnPrimaryLabel}>Kaydet</Text>
               </Pressable>
               {state === 'idle' || state === 'error' ? (
-                <Pressable
-                  onPress={() => {
-                    setSettingsOpen(false);
-                    void connect();
-                  }}
-                  style={[styles.btn, styles.btnGhost]}
-                >
+                <Pressable onPress={onConnect} style={[styles.btn, styles.btnGhost]}>
                   <Text style={styles.btnGhostLabel}>Bağlan</Text>
                 </Pressable>
               ) : (
@@ -177,12 +211,14 @@ export function StatusBar() {
             </Text>
           </Pressable>
         </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
     </>
   );
 }
 
 const styles = StyleSheet.create({
+  kav: { flex: 1 },
   flagRow: {
     flexDirection: 'row',
     alignItems: 'center',

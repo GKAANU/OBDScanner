@@ -2,73 +2,53 @@
  * Pure parsers for ELM327 responses. No I/O, no state.
  */
 
+import { findMarker, responseHex, responseMessages } from './response';
+
 const TYPE_CHAR = ['P', 'C', 'B', 'U'] as const;
 
 /**
- * Normalize a raw ELM327 response: strip line numbers, whitespace, prompt char.
+ * Normalize a raw ELM327 response into one byte-aligned hex string
+ * (see response.ts for everything that gets stripped).
  */
 function normalize(raw: string): string {
-  return raw
-    .toUpperCase()
-    .replace(/[\r\n]/g, ' ')
-    .replace(/\d+:\s*/g, '')
-    .replace(/\s+/g, '')
-    .replace(/>/g, '');
+  return responseHex(raw);
 }
+
+const DTC_MARKERS = ['43', '47', '4A'] as const;
 
 /**
  * Parse a Mode 03 / 07 / 0A DTC response into canonical codes (e.g. "P0420").
+ *
+ * Each ECU reply is decoded separately:
+ *  - ISO 15765 (CAN) replies carry a count byte: `43 NN <NN x 2 bytes>`, so
+ *    the data after the mode byte has an odd byte length.
+ *  - ISO 9141 / KWP / J1850 replies have no count byte and always carry
+ *    exactly 3 DTC slots (6 bytes, zero padded), one line per 3 codes.
  */
 export function parseDTCs(raw: string): string[] {
-  const clean = normalize(raw);
-
-  // Mode 03 -> 43, Mode 07 -> 47, Mode 0A -> 4A
-  let responseIdx = -1;
-  for (const marker of ['43', '47', '4A']) {
-    const i = clean.indexOf(marker);
-    if (i !== -1 && (responseIdx === -1 || i < responseIdx)) responseIdx = i;
-  }
-  if (responseIdx === -1) return [];
-
-  let data = clean.substring(responseIdx + 2);
-
-  // ISO 15765 (CAN) and ISO 14229 typically prefix the DTC list with a
-  // count byte. Older protocols (J1850, KWP) do not. We strip when:
-  //   - the leading byte is a small number (1..15), AND
-  //   - the remaining data is exactly count*4 hex chars (tight fit), OR
-  //   - the remaining data is at least count*4 with trailing zeros only.
-  if (data.length >= 4) {
-    const possibleCount = parseInt(data.substring(0, 2), 16);
-    if (!isNaN(possibleCount) && possibleCount > 0 && possibleCount <= 15) {
-      const required = possibleCount * 4;
-      const after = data.substring(2);
-      let strip = false;
-      if (possibleCount === 1) {
-        // Single-DTC payloads are ambiguous when padded with zeros; only
-        // strip when the response length is an exact match.
-        if (after.length === required) strip = true;
-      } else {
-        // Multi-DTC: tolerate either trailing zeros or a missing final pad
-        // byte (some ECUs drop the last 0x00 in multi-frame replies).
-        if (after.length >= required - 4) {
-          const tail = after.substring(required);
-          if (/^0*$/.test(tail)) strip = true;
-        }
-      }
-      if (strip) {
-        data = after;
-      }
+  const out: string[] = [];
+  for (const msg of responseMessages(raw)) {
+    const marker = DTC_MARKERS.find((m) => msg.startsWith(m));
+    if (!marker) continue;
+    const data = msg.substring(2);
+    const byteLen = data.length / 2;
+    let codes: string[];
+    if (byteLen % 2 === 1) {
+      const count = parseInt(data.substring(0, 2), 16);
+      codes = decodeDTCList(data.substring(2, 2 + count * 4));
+    } else {
+      codes = decodeDTCList(data);
     }
+    for (const c of codes) if (!out.includes(c)) out.push(c);
   }
-
-  return decodeDTCList(data);
+  return out;
 }
 
 function decodeDTCList(data: string): string[] {
   const dtcs: string[] = [];
   for (let i = 0; i + 4 <= data.length; i += 4) {
     const chunk = data.substring(i, i + 4);
-    if (chunk === '0000') break;
+    if (chunk === '0000') continue; // empty slot
     const code = decodeDTCHex(chunk);
     if (code) dtcs.push(code);
   }
@@ -101,9 +81,37 @@ export function decodeDTCHex(hex4: string): string | null {
 export function parseFreezeFrameDTC(raw: string, frame = '00'): string | null {
   const clean = normalize(raw);
   const marker = `4202${frame.toUpperCase()}`;
-  const idx = clean.indexOf(marker);
+  const idx = findMarker(clean, marker);
   if (idx === -1) return null;
   return decodeDTCHex(clean.substring(idx + marker.length, idx + marker.length + 4));
+}
+
+/**
+ * Collect the payload bytes (as hex) of a Mode 09 reply for `marker`
+ * ("4902", "4904", "490A").
+ *  - CAN: one message `49 PP NN <data>` (NN = number of data items).
+ *  - ISO 9141 / KWP: several 7-byte lines `49 PP SS <4 bytes>`, SS = 1, 2, 3...
+ * With several ECUs answering on CAN, only the first reply is used.
+ */
+function mode09Payload(raw: string, marker: string): string | null {
+  const m = marker.toUpperCase();
+  const msgs = responseMessages(raw).filter((x) => x.startsWith(m));
+  if (msgs.length === 0) return null;
+  const legacy =
+    msgs.length > 1 &&
+    msgs.every((x, i) => x.length === 14 && parseInt(x.substring(4, 6), 16) === i + 1);
+  if (legacy) return msgs.map((x) => x.substring(6)).join('');
+  return msgs[0].substring(m.length + 2);
+}
+
+function hexToAscii(hex: string): string {
+  let out = '';
+  for (let i = 0; i + 2 <= hex.length; i += 2) {
+    const code = parseInt(hex.substring(i, i + 2), 16);
+    if (isNaN(code)) break;
+    if (code >= 0x20 && code <= 0x7e) out += String.fromCharCode(code);
+  }
+  return out;
 }
 
 /**
@@ -112,18 +120,9 @@ export function parseFreezeFrameDTC(raw: string, frame = '00'): string | null {
  * pad differently); returns null only when the marker is missing.
  */
 export function parseVIN(raw: string): string | null {
-  const clean = normalize(raw);
-  const idx = clean.indexOf('4902');
-  if (idx === -1) return null;
-  // Skip "4902" (mode/PID) + 1-byte NODI (number of data items).
-  const hex = clean.substring(idx + 6);
-  let vin = '';
-  for (let i = 0; i + 2 <= hex.length; i += 2) {
-    const code = parseInt(hex.substring(i, i + 2), 16);
-    if (isNaN(code)) break;
-    if (code === 0) continue;
-    if (code >= 0x20 && code <= 0x7e) vin += String.fromCharCode(code);
-  }
+  const hex = mode09Payload(raw, '4902');
+  if (hex === null) return null;
+  const vin = hexToAscii(hex).trim();
   return vin.length === 17 ? vin : vin || null;
 }
 
@@ -132,19 +131,10 @@ export function parseVIN(raw: string): string | null {
  * mode/PID marker like "4904" or "490A".
  */
 export function parseMode09Ascii(raw: string, marker: string): string | null {
-  const clean = normalize(raw);
-  const idx = clean.indexOf(marker.toUpperCase());
-  if (idx === -1) return null;
-  // Skip marker + NODI byte.
-  const hex = clean.substring(idx + marker.length + 2);
-  let out = '';
-  for (let i = 0; i + 2 <= hex.length; i += 2) {
-    const code = parseInt(hex.substring(i, i + 2), 16);
-    if (isNaN(code)) break;
-    if (code === 0) continue;
-    if (code >= 0x20 && code <= 0x7e) out += String.fromCharCode(code);
-  }
-  return out.length > 0 ? out.trim() : null;
+  const hex = mode09Payload(raw, marker);
+  if (hex === null) return null;
+  const out = hexToAscii(hex).trim();
+  return out.length > 0 ? out : null;
 }
 
 /**
@@ -152,7 +142,7 @@ export function parseMode09Ascii(raw: string, marker: string): string | null {
  */
 export function parseCVN(raw: string): string | null {
   const clean = normalize(raw);
-  const idx = clean.indexOf('4906');
+  const idx = findMarker(clean, '4906');
   if (idx === -1) return null;
   // Skip "4906" + NODI byte.
   const hex = clean.substring(idx + 6);
@@ -185,7 +175,7 @@ export type ReadinessReport = {
  */
 export function parseReadiness(raw: string): ReadinessReport | null {
   const clean = normalize(raw);
-  const idx = clean.indexOf('4101');
+  const idx = findMarker(clean, '4101');
   if (idx === -1) return null;
   const hex = clean.substring(idx + 4);
   if (hex.length < 8) return null;

@@ -1,3 +1,5 @@
+import { findMarker, responseHex } from './response';
+
 /**
  * Single source of truth for Mode 01 PID metadata.
  * UI never hardcodes PID strings; it reads from this registry.
@@ -72,15 +74,13 @@ export const DEFAULT_LIVE_PIDS: string[] = [
   'TPS',
 ];
 
-/** Extract data bytes from a Mode 01 raw response, given expected marker like '410C'. */
+/**
+ * Extract data bytes following `marker` (e.g. '410C') from a raw response.
+ * Normalization (echo, SEARCHING..., headers, multi-frame) is in response.ts.
+ */
 export function extractDataBytes(raw: string, marker: string): number[] | null {
-  const clean = raw
-    .toUpperCase()
-    .replace(/[\r\n]/g, ' ')
-    .replace(/\d+:\s*/g, '')
-    .replace(/\s+/g, '')
-    .replace(/>/g, '');
-  const idx = clean.indexOf(marker);
+  const clean = responseHex(raw);
+  const idx = findMarker(clean, marker);
   if (idx === -1) return null;
   const data = clean.substring(idx + marker.length);
   const bytes: number[] = [];

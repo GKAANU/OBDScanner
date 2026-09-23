@@ -1,0 +1,4 @@
+BUS INIT: ...OK
+41 00 BE 3E B8 11 
+
+>

@@ -12,6 +12,7 @@ import { OBDClient, type OBDConfig, DEFAULT_OBD_CONFIG } from './client';
 import { DEFAULT_LIVE_PIDS } from './pid-registry';
 import { userMessage } from './protocol';
 import { TcpTransport } from './transport-tcp';
+import { DemoTransport } from './transport-demo';
 
 export type ConnectionState = 'idle' | 'connecting' | 'initializing' | 'ready' | 'error';
 
@@ -26,7 +27,8 @@ type Ctx = {
   adapterVersion: string | null;
   selectedLivePids: string[];
   setSelectedLivePids: (ids: string[]) => void;
-  connect: () => Promise<void>;
+  /** Connect using the saved config; `overrides` (e.g. { demo: true }) are saved first. */
+  connect: (overrides?: Partial<OBDConfig>) => Promise<void>;
   disconnect: () => void;
   refreshBattery: () => Promise<void>;
 };
@@ -40,6 +42,7 @@ const STORAGE_KEYS = {
 
 export function OBDProvider({ children }: { children: React.ReactNode }) {
   const clientRef = useRef<OBDClient>(new OBDClient());
+  const connectingRef = useRef(false);
   const [config, setConfigState] = useState<OBDConfig>(DEFAULT_OBD_CONFIG);
   const [state, setState] = useState<ConnectionState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -116,13 +119,18 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     return () => c.setDisconnectListener(null);
   }, [clearSession]);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (overrides?: Partial<OBDConfig>) => {
     const c = clientRef.current;
-    if (c.isConnected()) return;
+    if (c.isConnected() || connectingRef.current) return;
+    connectingRef.current = true;
+    const cfg: OBDConfig = overrides ? { ...config, ...overrides } : config;
+    if (overrides) setConfig(cfg);
     setErrorMessage(null);
     setState('connecting');
     try {
-      await c.connect(new TcpTransport(config.host, config.port), config);
+      // Demo mode never opens a socket: it talks to the in-memory simulator.
+      const transport = cfg.demo ? new DemoTransport() : new TcpTransport(cfg.host, cfg.port);
+      await c.connect(transport, cfg);
       setState('initializing');
       await c.init();
       // Capture protocol + adapter version + battery for the status bar.
@@ -144,8 +152,10 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       try {
         c.disconnect();
       } catch {}
+    } finally {
+      connectingRef.current = false;
     }
-  }, [config, clearSession]);
+  }, [config, setConfig, clearSession]);
 
   const disconnect = useCallback(() => {
     clientRef.current.disconnect();

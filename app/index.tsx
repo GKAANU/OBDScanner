@@ -25,6 +25,7 @@ export default function TaniScreen() {
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastScanAt, setLastScanAt] = useState<string | null>(null);
+  const busyConnecting = state === 'connecting' || state === 'initializing';
   const [freezeFrame, setFreezeFrame] = useState<FreezeFrameState>({ status: 'idle' });
 
   const loadFreezeFrame = useCallback(async () => {
@@ -134,15 +135,29 @@ export default function TaniScreen() {
           <View style={styles.callout}>
             <Text style={styles.calloutTitle}>Bağlanmadın.</Text>
             <Text style={styles.calloutBody}>
-              Önce Wi-Fi’ı dongle’a bağla, sonra Bağlan’a bas.
+              Önce iPhone’un Wi-Fi’ını OBD-II adaptörüne bağla, sonra Bağlan’a bas.
             </Text>
             <Pressable
-              style={styles.connectBtn}
+              style={[styles.connectBtn, busyConnecting && styles.scanBtnDisabled]}
+              disabled={busyConnecting}
               onPress={() => {
-                void connect();
+                void connect({ demo: false });
               }}
             >
-              <Text style={styles.connectLabel}>Bağlan</Text>
+              {busyConnecting ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.connectLabel}>Bağlan</Text>
+              )}
+            </Pressable>
+            <Pressable
+              style={[styles.demoBtn, busyConnecting && styles.scanBtnDisabled]}
+              disabled={busyConnecting}
+              onPress={() => {
+                void connect({ demo: true });
+              }}
+            >
+              <Text style={styles.demoLabel}>Adaptörün yok mu? Demo modunda dene</Text>
             </Pressable>
           </View>
         ) : (
@@ -306,6 +321,18 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.m,
     borderRadius: radius.m,
     alignItems: 'center',
+  },
+  demoBtn: {
+    paddingVertical: spacing.m,
+    borderRadius: radius.m,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  demoLabel: {
+    color: colors.body,
+    fontFamily: fonts.bodyMedium,
+    fontSize: fontSize.s,
   },
   connectLabel: {
     color: '#fff',

@@ -68,7 +68,7 @@ export function StatusBar() {
       <Pressable onPress={openSettings} style={styles.bar}>
         <View style={[styles.dot, { backgroundColor: dotColor }]} />
         <Text style={styles.host} numberOfLines={1}>
-          {config.host}:{config.port}
+          {config.demo ? 'DEMO' : `${config.host}:${config.port}`}
         </Text>
         <Text style={styles.sep}>·</Text>
         <Text style={styles.label} numberOfLines={1}>
@@ -87,6 +87,22 @@ export function StatusBar() {
         <Pressable style={styles.backdrop} onPress={() => setSettingsOpen(false)}>
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.sheetTitle}>Bağlantı ayarları</Text>
+
+            <View style={styles.flagRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.flagLabel}>Demo modu</Text>
+                <Text style={styles.flagHint}>
+                  Adaptör olmadan örnek bir araçla dene. Gösterilen veriler gerçek değildir.
+                </Text>
+              </View>
+              <Switch
+                value={!!config.demo}
+                onValueChange={(v) => {
+                  if (state !== 'idle' && state !== 'error') disconnect();
+                  setConfig({ ...config, demo: v });
+                }}
+              />
+            </View>
 
             <Text style={styles.fieldLabel}>Host</Text>
             <TextInput

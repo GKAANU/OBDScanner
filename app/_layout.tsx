@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { View, StyleSheet, Text, ActivityIndicator } from 'react-native';
 import { Tabs } from 'expo-router';
@@ -11,10 +11,19 @@ import { colors, fonts, fontSize } from '../src/ui/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+const FONT_TIMEOUT_MS = 4000;
+
 export default function RootLayout() {
-  const [geistLoaded] = useGeist({ Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold });
-  const [monoLoaded] = useGeistMono({ GeistMono_400Regular, GeistMono_500Medium, GeistMono_600SemiBold });
-  const ready = geistLoaded && monoLoaded;
+  const [geistLoaded, geistError] = useGeist({ Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold });
+  const [monoLoaded, monoError] = useGeistMono({ GeistMono_400Regular, GeistMono_500Medium, GeistMono_600SemiBold });
+  // Never get stuck on the splash: if the fonts fail or take too long,
+  // continue with the system font (unknown fontFamily falls back on iOS).
+  const [fontTimeout, setFontTimeout] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setFontTimeout(true), FONT_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, []);
+  const ready = ((geistLoaded || !!geistError) && (monoLoaded || !!monoError)) || fontTimeout;
 
   useEffect(() => {
     if (ready) SplashScreen.hideAsync().catch(() => {});
@@ -44,9 +53,13 @@ export default function RootLayout() {
             },
             tabBarActiveTintColor: colors.accent,
             tabBarInactiveTintColor: colors.muted,
+            // Text-only tabs: without this React Navigation draws a
+            // placeholder glyph where the icon would be.
+            tabBarIcon: () => null,
+            tabBarIconStyle: { display: 'none' },
             tabBarLabelStyle: {
               fontFamily: fonts.bodyMedium,
-              fontSize: fontSize.xs,
+              fontSize: fontSize.m,
             },
           }}
         >

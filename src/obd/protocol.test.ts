@@ -4,6 +4,7 @@ import {
   OBDError,
   recoveryAction,
   takeResponse,
+  terminalPolicy,
   userMessage,
 } from './protocol';
 
@@ -79,5 +80,35 @@ describe('userMessage', () => {
   });
   it('never leaks raw English messages', () => {
     expect(userMessage(new Error('something odd'))).toBe('Beklenmeyen hata. Bağlantıyı kapatıp tekrar dene.');
+  });
+});
+
+describe('terminalPolicy', () => {
+  it('allows AT commands and read-only OBD services', () => {
+    for (const c of ['ATRV', 'at dp', 'ATH1', 'STI', '010C', '01 0c', '03', '07', '0A', '0902', '020200', '0600']) {
+      expect(terminalPolicy(c)).toBe('allow');
+    }
+  });
+
+  it('asks for confirmation before Mode 04', () => {
+    expect(terminalPolicy('04')).toBe('confirm-clear');
+    expect(terminalPolicy(' 0 4 ')).toBe('confirm-clear');
+    expect(terminalPolicy('4')).toBe('confirm-clear');
+  });
+
+  it('blocks monitor commands that never return a prompt', () => {
+    for (const c of ['ATMA', 'at ma', 'ATMR 10', 'ATMT 10', 'STMA', 'ATMP 0C']) {
+      expect(terminalPolicy(c)).toBe('block-monitor');
+    }
+  });
+
+  it('blocks services that write to or actuate the vehicle', () => {
+    for (const c of ['08', '2E F190 00', '31 01 FF 00', '3B', '14 FF FF FF', '10 03', '27 01', '11 01']) {
+      expect(terminalPolicy(c)).toBe('block-write');
+    }
+  });
+
+  it('lets unknown text through for the adapter to reject', () => {
+    expect(terminalPolicy('HELLO')).toBe('allow');
   });
 });

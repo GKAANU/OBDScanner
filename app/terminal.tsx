@@ -1,6 +1,7 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -11,9 +12,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Clipboard from 'expo-clipboard';
+import { copyText } from '../src/ui/clipboard';
 import { StatusBar as ConnStatusBar } from '../src/ui/StatusBar';
 import { useOBD } from '../src/obd/context';
+import { terminalPolicy, userMessage } from '../src/obd/protocol';
 import { colors, fonts, fontSize, radius, spacing } from '../src/ui/theme';
 
 type Entry = {
@@ -32,37 +34,66 @@ export default function TerminalScreen() {
   const [history, setHistory] = useState<Entry[]>([]);
   const [busy, setBusy] = useState(false);
 
-  const send = useCallback(async () => {
+  const nextId = useRef(0);
+
+  const execute = useCallback(
+    async (cmd: string) => {
+      setBusy(true);
+      const id = `${++nextId.current}`;
+      try {
+        // Raw terminal: no automatic STOPPED / BUS INIT recovery.
+        const raw = await client.send(cmd, { recover: false });
+        pushEntry(setHistory, { id, command: cmd, response: raw, ok: true, ts: timeNow() });
+      } catch (e) {
+        pushEntry(setHistory, { id, command: cmd, response: userMessage(e), ok: false, ts: timeNow() });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [client]
+  );
+
+  const send = useCallback(() => {
     const cmd = input.trim();
     if (!cmd || busy || state !== 'ready') return;
-    setBusy(true);
-    setInput('');
-    try {
-      // Raw terminal: no automatic STOPPED / BUS INIT recovery.
-      const raw = await client.send(cmd, { recover: false });
-      pushEntry(setHistory, {
-        id: `${Date.now()}`,
-        command: cmd,
-        response: raw,
-        ok: true,
-        ts: new Date().toLocaleTimeString(),
-      });
-    } catch (e) {
-      pushEntry(setHistory, {
-        id: `${Date.now()}`,
-        command: cmd,
-        response: e instanceof Error ? e.message : String(e),
-        ok: false,
-        ts: new Date().toLocaleTimeString(),
-      });
-    } finally {
-      setBusy(false);
+    const reject = (msg: string) =>
+      pushEntry(setHistory, { id: `${++nextId.current}`, command: cmd, response: msg, ok: false, ts: timeNow() });
+
+    switch (terminalPolicy(cmd)) {
+      case 'block-monitor':
+        setInput('');
+        reject('İzleme komutları (ATMA, ATMR, ATMT …) desteklenmiyor: adaptörü kilitler.');
+        return;
+      case 'block-write':
+        setInput('');
+        reject('Otova sadece okuma yapar. Bu servis araca yazar veya test çalıştırır, gönderilmedi.');
+        return;
+      case 'confirm-clear':
+        Alert.alert(
+          'Hata kodlarını sil?',
+          'Hata kodlarını silmek arızayı çözmez, sadece lambayı söndürür. Altta yatan sorun sürerse kod tekrar gelecek.',
+          [
+            { text: 'Vazgeç', style: 'cancel' },
+            {
+              text: 'Sil',
+              style: 'destructive',
+              onPress: () => {
+                setInput('');
+                void execute(cmd);
+              },
+            },
+          ]
+        );
+        return;
+      default:
+        setInput('');
+        void execute(cmd);
     }
-  }, [input, busy, state, client]);
+  }, [input, busy, state, execute]);
 
   const onCopyEntry = useCallback(async (e: Entry) => {
     const text = `> ${e.command}\n${e.response}`;
-    await Clipboard.setStringAsync(text);
+    await copyText(text);
   }, []);
 
   return (
@@ -72,10 +103,10 @@ export default function TerminalScreen() {
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <Text style={styles.h1}>Terminal</Text>
           <Text style={styles.sub}>
-            Serbest AT veya OBD komutu gönder. Sadece okuma; Mode 04 hariç hiçbir komut araca yazmaz.
+            Serbest AT veya OBD komutu gönder. Sadece okuma servisleri gönderilir; Mode 04 onay ister.
           </Text>
 
           {state !== 'ready' ? (
@@ -92,11 +123,11 @@ export default function TerminalScreen() {
               autoCorrect={false}
               keyboardType="ascii-capable"
               style={styles.input}
-              onSubmitEditing={() => void send()}
+              onSubmitEditing={send}
               editable={state === 'ready' && !busy}
             />
             <Pressable
-              onPress={() => void send()}
+              onPress={send}
               disabled={busy || state !== 'ready' || !input.trim()}
               style={[
                 styles.sendBtn,
@@ -128,6 +159,10 @@ export default function TerminalScreen() {
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
+}
+
+function timeNow(): string {
+  return new Date().toLocaleTimeString('tr-TR');
 }
 
 function pushEntry(setter: React.Dispatch<React.SetStateAction<Entry[]>>, e: Entry) {

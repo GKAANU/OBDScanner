@@ -61,6 +61,37 @@ export function atstCommand(ms: number): string {
   return `ATST${units.toString(16).toUpperCase().padStart(2, '0')}`;
 }
 
+/** What the Terminal may do with a free-form command. */
+export type TerminalPolicy =
+  /** Send as-is. */
+  | 'allow'
+  /** Mode 04 (clear DTCs): send only after the user confirms the warning. */
+  | 'confirm-clear'
+  /** Monitor commands (ATMA, STMA ...) stream forever and never return `>`. */
+  | 'block-monitor'
+  /** OBD services that write to or actuate the vehicle. Otova is read-only. */
+  | 'block-write';
+
+/** Read-only SAE J1979 services (Mode 08 actuates on-board tests, so it is excluded). */
+const READ_ONLY_SERVICES = new Set(['01', '02', '03', '05', '06', '07', '09', '0A']);
+
+/**
+ * Classify a Terminal command. AT/ST commands only configure the adapter and
+ * are allowed except the monitor family. Hex requests are allowed only for
+ * read-only OBD services; Mode 04 needs confirmation; everything else (UDS
+ * writes, routines, actuator tests ...) is blocked.
+ */
+export function terminalPolicy(command: string): TerminalPolicy {
+  const cmd = command.replace(/\s+/g, '').toUpperCase();
+  if (cmd.startsWith('AT') || cmd.startsWith('ST')) {
+    return /^(AT|ST)M[ARTP]/.test(cmd) ? 'block-monitor' : 'allow';
+  }
+  if (!/^[0-9A-F]+$/.test(cmd)) return 'allow'; // adapter answers "?"
+  const service = cmd.length === 1 ? `0${cmd}` : cmd.substring(0, 2);
+  if (service === '04') return 'confirm-clear';
+  return READ_ONLY_SERVICES.has(service) ? 'allow' : 'block-write';
+}
+
 /** Thrown by OBDClient; `code` is stable, `message` is for logs only. */
 export class OBDError extends Error {
   constructor(

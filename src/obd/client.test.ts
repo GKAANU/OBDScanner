@@ -351,6 +351,23 @@ describe('OBDClient high-level reads', () => {
     expect(byId.LOAD).toBeCloseTo(25.1, 1);
   });
 
+  it('readFreezeFrame follows Mode 02 bank 20 for PIDs above 0x20', async () => {
+    const replies: Record<string, string> = {
+      '020200': '4202000133>',
+      '020000': '42000000100001>', // 0C, and bank 20 exists
+      '022000': '42200000020000>', // 2F (fuel level)
+      '020C00': '420C001AF8>',
+      '022F00': '422F0080>',
+    };
+    const { c, t } = await connected((cmd) => [replies[cmd] ?? 'NO DATA>']);
+    const ff = await c.readFreezeFrame();
+    const byId = Object.fromEntries(ff.values.map((v) => [v.def.id, v.value]));
+    expect(byId.RPM).toBe(1726);
+    expect(byId.FUEL).toBeCloseTo(50.2, 1);
+    expect(t.written).toContain('022000');
+    expect(t.written).not.toContain('024000');
+  });
+
   it('readFreezeFrame returns no values when no frame is stored', async () => {
     const { c, t } = await connected(() => ['4202000000>']);
     await expect(c.readFreezeFrame()).resolves.toEqual({ frame: '00', dtc: null, values: [] });

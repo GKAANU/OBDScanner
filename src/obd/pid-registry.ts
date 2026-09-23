@@ -1,4 +1,4 @@
-import { findMarker, responseHex } from './response';
+import { findMarker, responseHex, responseMessages } from './response';
 
 /**
  * Single source of truth for Mode 01 PID metadata.
@@ -127,22 +127,39 @@ export const FREEZE_FRAME_FALLBACK_IDS: string[] = [
 
 /**
  * Parse a "supported PIDs" bitmap response (Mode 01 PIDs 00, 20, 40, 60, 80, A0, C0, E0,
- * or the Mode 02 equivalent for freeze frame 00).
- * Each response covers 32 PIDs starting from baseHex+1.
- * Returns a list of supported hex PIDs (uppercase, two-digit).
+ * or the Mode 02 equivalent for a freeze frame).
+ * Each response covers 32 PIDs starting from baseHex+1. When several ECUs
+ * answer (engine + transmission), their bitmaps are merged (bitwise OR).
+ * Returns a sorted list of supported hex PIDs (uppercase, two-digit).
  */
-export function parseSupportedPids(raw: string, basePidHex: string, mode: '01' | '02' = '01'): string[] {
+export function parseSupportedPids(
+  raw: string,
+  basePidHex: string,
+  mode: '01' | '02' = '01',
+  frame = '00'
+): string[] {
   // Mode 01 reply: 41 <base> AA BB CC DD.
   // Mode 02 reply: 42 <base> <frame> AA BB CC DD (frame byte echoed).
-  const marker = mode === '01' ? `41${basePidHex.toUpperCase()}` : `42${basePidHex.toUpperCase()}00`;
-  const bytes = extractDataBytes(raw, marker);
-  if (!bytes || bytes.length < 4) return [];
-  const baseNum = parseInt(basePidHex, 16);
+  const base = basePidHex.toUpperCase();
+  const marker = mode === '01' ? `41${base}` : `42${base}${frame.toUpperCase()}`;
+  const bitmap = [0, 0, 0, 0];
+  let found = false;
+  for (const msg of responseMessages(raw)) {
+    const idx = findMarker(msg, marker);
+    if (idx === -1) continue;
+    const data = msg.substring(idx + marker.length);
+    if (data.length < 8) continue;
+    const bytes = [0, 1, 2, 3].map((i) => parseInt(data.substring(i * 2, i * 2 + 2), 16));
+    if (bytes.some((b) => isNaN(b))) continue;
+    found = true;
+    bytes.forEach((b, i) => (bitmap[i] |= b));
+  }
+  if (!found) return [];
+  const baseNum = parseInt(base, 16);
   const supported: string[] = [];
   for (let i = 0; i < 4; i++) {
-    const byte = bytes[i];
     for (let bit = 0; bit < 8; bit++) {
-      if (byte & (1 << (7 - bit))) {
+      if (bitmap[i] & (1 << (7 - bit))) {
         const pidNum = baseNum + i * 8 + bit + 1;
         supported.push(pidNum.toString(16).toUpperCase().padStart(2, '0'));
       }

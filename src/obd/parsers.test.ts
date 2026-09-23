@@ -253,3 +253,41 @@ describe('parseSupportedPids (Mode 02)', () => {
     expect(parseSupportedPids('NO DATA', '00', '02')).toEqual([]);
   });
 });
+
+describe('parseReadiness (diesel)', () => {
+  it('uses compression-ignition monitor names when B bit 3 is set', () => {
+    // B=0x0F: continuous supported + diesel; C=0xE9: NMHC, boost, EGS, DPF, EGR; D=0x40: DPF not ready
+    const r = parseReadiness('41 01 00 0F E9 40 >')!;
+    const names = r.monitors.filter((m) => !m.continuous).map((m) => m.name);
+    expect(names).toEqual([
+      'NMHC katalizörü',
+      'NOx/SCR sistemi',
+      'Turbo basıncı',
+      'Egzoz gaz sensörü',
+      'Partikül filtresi (DPF)',
+      'EGR/VVT sistemi',
+    ]);
+    const dpf = r.monitors.find((m) => m.name === 'Partikül filtresi (DPF)')!;
+    expect(dpf).toMatchObject({ supported: true, ready: false });
+    expect(r.monitors.find((m) => m.name === 'NOx/SCR sistemi')).toMatchObject({ supported: false });
+  });
+
+  it('keeps petrol names when B bit 3 is clear', () => {
+    const r = parseReadiness('41 01 00 07 65 00 >')!;
+    expect(r.monitors.filter((m) => !m.continuous)).toHaveLength(8);
+    expect(r.monitors.some((m) => m.name === 'Buharlaşma sistemi')).toBe(true);
+  });
+});
+
+describe('parseSupportedPids (multiple ECUs)', () => {
+  it('merges the bitmaps of every answering ECU', () => {
+    // ECU 1 supports 0C only (bank 00 byte 2 = 0x10); ECU 2 supports 0D only (0x08).
+    const raw = '7E8 06 41 00 00 10 00 00\r7E9 06 41 00 00 08 00 00\r\r>';
+    expect(parseSupportedPids(raw, '00')).toEqual(['0C', '0D']);
+  });
+
+  it('honours the Mode 02 frame number', () => {
+    expect(parseSupportedPids('42 00 01 80 00 00 00 >', '00', '02', '01')).toEqual(['01']);
+    expect(parseSupportedPids('42 00 01 80 00 00 00 >', '00', '02', '00')).toEqual([]);
+  });
+});

@@ -66,6 +66,11 @@ export type PidReading =
 /** Mode 01 / 09 supported-PID bitmap banks, in query order. */
 const SUPPORTED_PID_BANKS = ['00', '20', '40', '60', '80', 'A0', 'C0', 'E0'] as const;
 
+/** PID whose bit says the next supported-PID bank exists ('00' -> '20'). */
+function nextBank(bank: string): string {
+  return (parseInt(bank, 16) + 0x20).toString(16).toUpperCase().padStart(2, '0');
+}
+
 const DTC_MODE: Record<DTCKind, string> = { stored: '03', pending: '07', permanent: '0A' };
 
 export const DEFAULT_OBD_CONFIG: OBDConfig = {
@@ -372,8 +377,7 @@ export class OBDClient {
       }
       if (list.length === 0) break;
       all.push(...list);
-      const nextBank = (parseInt(bank, 16) + 0x20).toString(16).toUpperCase().padStart(2, '0');
-      if (!list.includes(nextBank)) break;
+      if (!list.includes(nextBank(bank))) break;
     }
     return all;
   }
@@ -430,14 +434,20 @@ export class OBDClient {
     const dtc = parseFreezeFrameDTC(await this.freezeFrame('02', frame), frame);
     if (!dtc) return { frame, dtc: null, values: [] };
 
-    // Prefer the Mode 02 supported-PIDs bitmap; fall back to a fixed list.
-    let defs: PIDDef[] = [];
-    try {
-      const supported = parseSupportedPids(await this.freezeFrame('00', frame), '00', '02');
-      defs = supported.map((hex) => PID_BY_HEX[hex]).filter((d): d is PIDDef => !!d);
-    } catch {
-      // ignore — use fallback
+    // Prefer the Mode 02 supported-PIDs bitmaps (banks 00, 20, 40 ... chained
+    // like Mode 01); fall back to a fixed list.
+    const supported: string[] = [];
+    for (const bank of SUPPORTED_PID_BANKS) {
+      let list: string[];
+      try {
+        list = parseSupportedPids(await this.freezeFrame(bank, frame), bank, '02', frame);
+      } catch {
+        break;
+      }
+      supported.push(...list);
+      if (!list.includes(nextBank(bank))) break;
     }
+    let defs = supported.map((hex) => PID_BY_HEX[hex]).filter((d): d is PIDDef => !!d);
     if (defs.length === 0) {
       defs = FREEZE_FRAME_FALLBACK_IDS.map((id) => PID_BY_ID[id]).filter((d): d is PIDDef => !!d);
     }

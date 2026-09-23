@@ -17,10 +17,8 @@ import { useOBD } from '../src/obd/context';
 import {
   PID_REGISTRY,
   PID_BY_ID,
-  parsePidResponse,
   type PIDDef,
 } from '../src/obd/pid-registry';
-import { detectOBDError } from '../src/obd/parsers';
 import { colors, fonts, fontSize, radius, spacing } from '../src/ui/theme';
 import { formatLiveSnapshot } from '../src/utils/format';
 
@@ -65,19 +63,18 @@ export default function LiveScreen() {
       }
       for (const id of ids) {
         if (!pollingRef.current || !focusedRef.current) break;
-        const def = PID_BY_ID[id];
-        if (!def) continue;
+        if (!PID_BY_ID[id]) continue;
         try {
-          const raw = await client.livePid(def.pid);
-          const err = detectOBDError(raw);
-          if (err === 'NO_DATA' || err === 'UNKNOWN_COMMAND') {
+          const reading = await client.readPid(id);
+          const raw = reading.raw;
+          if (reading.status === 'unsupported') {
             setRows((prev) => ({
               ...prev,
-              [id]: { ...(prev[id] ?? blank()), value: null, unsupported: true, rawHex: raw.trim() },
+              [id]: { ...(prev[id] ?? blank()), value: null, unsupported: true, rawHex: raw },
             }));
             continue;
           }
-          const parsed = parsePidResponse(def, raw);
+          const parsed = reading.status === 'ok' ? reading.value : null;
           setRows((prev) => {
             const cur = prev[id] ?? blank();
             const num = typeof parsed === 'number' ? parsed : null;

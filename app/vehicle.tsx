@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -12,14 +12,8 @@ import { StatusBar as ConnStatusBar } from '../src/ui/StatusBar';
 import { CopyButton } from '../src/ui/CopyButton';
 import { ReadinessGrid } from '../src/ui/ReadinessGrid';
 import { useOBD } from '../src/obd/context';
-import {
-  parseCVN,
-  parseMode09Ascii,
-  parseReadiness,
-  parseVIN,
-  type ReadinessReport,
-} from '../src/obd/parsers';
-import { parseSupportedPids, PID_BY_HEX } from '../src/obd/pid-registry';
+import type { ReadinessReport } from '../src/obd/parsers';
+import { PID_BY_HEX } from '../src/obd/pid-registry';
 import { colors, fonts, fontSize, radius, spacing } from '../src/ui/theme';
 
 type VehicleInfo = {
@@ -49,47 +43,13 @@ export default function VehicleScreen() {
     setLoading(true);
     setError(null);
     try {
-      const next: VehicleInfo = {
-        vin: null,
-        ecuName: null,
-        calId: null,
-        cvn: null,
-        adapter: adapterVersion,
-      };
-      try {
-        next.vin = parseVIN(await client.mode09('02'));
-      } catch {}
-      try {
-        next.calId = parseMode09Ascii(await client.mode09('04'), '4904');
-      } catch {}
-      try {
-        next.cvn = parseCVN(await client.mode09('06'));
-      } catch {}
-      try {
-        next.ecuName = parseMode09Ascii(await client.mode09('0A'), '490A');
-      } catch {}
-      setInfo(next);
+      setInfo({ ...(await client.readVehicleInfo()), adapter: adapterVersion });
 
       try {
-        const r = parseReadiness(await client.livePid('01'));
-        setReadiness(r);
+        setReadiness(await client.readReadiness());
       } catch {}
 
-      // Probe supported-PID bitmaps. Each query covers 32 PIDs.
-      const banks = ['00', '20', '40', '60', '80', 'A0', 'C0', 'E0'];
-      const all: string[] = [];
-      for (const bank of banks) {
-        try {
-          const raw = await client.livePid(bank);
-          const list = parseSupportedPids(raw, bank);
-          if (list.length === 0) break; // no further banks supported
-          all.push(...list);
-          // Stop probing if "next bank supported" bit is not set on this bank's
-          // last byte; simpler heuristic: stop after first empty bank above.
-        } catch {
-          break;
-        }
-      }
+      const all = await client.readSupportedPids();
       setSupportedPids(all);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -98,11 +58,19 @@ export default function VehicleScreen() {
     }
   }, [client, state, adapterVersion]);
 
+  // Auto-load once per connection. (Guarding on `!info.vin` looped forever on
+  // cars that do not report a VIN.)
+  const autoLoadedRef = useRef(false);
   useEffect(() => {
-    if (state === 'ready' && !info.vin && !loading) {
+    if (state !== 'ready') {
+      autoLoadedRef.current = false;
+      return;
+    }
+    if (!autoLoadedRef.current) {
+      autoLoadedRef.current = true;
       void load();
     }
-  }, [state, info.vin, loading, load]);
+  }, [state, load]);
 
   const copyText = useMemo(() => {
     const lines: string[] = [];

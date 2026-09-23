@@ -1,7 +1,18 @@
 import TcpSocket from 'react-native-tcp-socket';
-import { detectOBDError, parseFreezeFrameDTC } from './parsers';
+import {
+  detectOBDError,
+  parseBatteryVoltage,
+  parseCVN,
+  parseDTCs,
+  parseFreezeFrameDTC,
+  parseMode09Ascii,
+  parseReadiness,
+  parseVIN,
+  type ReadinessReport,
+} from './parsers';
 import {
   FREEZE_FRAME_FALLBACK_IDS,
+  parsePidResponse,
   PID_BY_HEX,
   PID_BY_ID,
   parseFreezeFramePidResponse,
@@ -20,6 +31,25 @@ export type FreezeFrame = {
   dtc: string | null;
   values: FreezeFrameValue[];
 };
+
+export type DTCKind = 'stored' | 'pending' | 'permanent';
+
+export type VehicleInfo = {
+  vin: string | null;
+  calId: string | null;
+  cvn: string | null;
+  ecuName: string | null;
+};
+
+export type PidReading =
+  | { status: 'ok'; value: number | string; raw: string }
+  | { status: 'unsupported'; raw: string }
+  | { status: 'invalid'; raw: string };
+
+/** Mode 01 / 09 supported-PID bitmap banks, in query order. */
+const SUPPORTED_PID_BANKS = ['00', '20', '40', '60', '80', 'A0', 'C0', 'E0'] as const;
+
+const DTC_MODE: Record<DTCKind, string> = { stored: '03', pending: '07', permanent: '0A' };
 
 export const DEFAULT_OBD_CONFIG: OBDConfig = {
   host: '192.168.0.10',
@@ -132,18 +162,98 @@ export class OBDClient {
     await this.send('0100', 8000);
   }
 
-  // High-level helpers — UI layer should use these, never raw send().
-  storedDTCs(): Promise<string> {
-    return this.send('03');
+  // ---------------------------------------------------------------------
+  // High-level API. UI code uses these; only the Terminal tab calls send().
+  // ---------------------------------------------------------------------
+
+  /** Read Mode 03 / 07 / 0A and return parsed DTCs. NO DATA means zero codes. */
+  async readDTCs(kind: DTCKind): Promise<string[]> {
+    return parseDTCs(await this.send(DTC_MODE[kind]));
   }
-  pendingDTCs(): Promise<string> {
-    return this.send('07');
+
+  /** Mode 04. Clears stored/pending DTCs and freeze frames (not permanent ones). */
+  clearDTCs(): Promise<string> {
+    return this.send('04');
   }
-  permanentDTCs(): Promise<string> {
-    return this.send('0A');
+
+  /** Read a Mode 01 PID by registry id (e.g. 'RPM'). */
+  async readPid(id: string): Promise<PidReading> {
+    const def = PID_BY_ID[id];
+    if (!def) throw new Error(`Unknown PID id: ${id}`);
+    const raw = (await this.send(`01${def.pid}`)).trim();
+    const err = detectOBDError(raw);
+    if (err === 'NO_DATA' || err === 'UNKNOWN_COMMAND') return { status: 'unsupported', raw };
+    const value = parsePidResponse(def, raw);
+    return value === null ? { status: 'invalid', raw } : { status: 'ok', value, raw };
   }
+
+  /** Mode 01 PID 01: MIL, DTC count, readiness monitors. */
+  async readReadiness(): Promise<ReadinessReport | null> {
+    return parseReadiness(await this.send('0101'));
+  }
+
+  /**
+   * Probe Mode 01 supported-PID bitmaps (00, 20, 40 ...). Each bank covers
+   * 32 PIDs; the last bit of a bank says whether the next bank exists.
+   */
+  async readSupportedPids(): Promise<string[]> {
+    const all: string[] = [];
+    for (const bank of SUPPORTED_PID_BANKS) {
+      let list: string[];
+      try {
+        list = parseSupportedPids(await this.send(`01${bank}`), bank);
+      } catch {
+        break;
+      }
+      if (list.length === 0) break;
+      all.push(...list);
+      const nextBank = (parseInt(bank, 16) + 0x20).toString(16).toUpperCase().padStart(2, '0');
+      if (!list.includes(nextBank)) break;
+    }
+    return all;
+  }
+
+  /** Mode 09: VIN (02), calibration ID (04), CVN (06), ECU name (0A). */
+  async readVehicleInfo(): Promise<VehicleInfo> {
+    const info: VehicleInfo = { vin: null, calId: null, cvn: null, ecuName: null };
+    try {
+      info.vin = parseVIN(await this.mode09('02'));
+    } catch {}
+    try {
+      info.calId = parseMode09Ascii(await this.mode09('04'), '4904');
+    } catch {}
+    try {
+      info.cvn = parseCVN(await this.mode09('06'));
+    } catch {}
+    try {
+      info.ecuName = parseMode09Ascii(await this.mode09('0A'), '490A');
+    } catch {}
+    return info;
+  }
+
+  /** ATRV: adapter-measured battery voltage in volts, or null. */
+  async readBatteryVoltage(): Promise<number | null> {
+    return parseBatteryVoltage(await this.send('ATRV'));
+  }
+
+  /** ATDP: human-readable protocol name, or null if the adapter reports an error. */
+  async readProtocolName(): Promise<string | null> {
+    const raw = (await this.send('ATDP')).trim();
+    return raw && !detectOBDError(raw) ? raw : null;
+  }
+
+  /** ATI: adapter chip version banner (e.g. "ELM327 v1.5"). */
+  async readAdapterVersion(): Promise<string | null> {
+    const raw = (await this.send('ATI')).trim();
+    return raw || null;
+  }
+
+  private mode09(pid: string): Promise<string> {
+    return this.send(`09${pid}`, 6000);
+  }
+
   /** Raw Mode 02 request: `02 <PID> <frame>`. Frame 00 is the standard frame. */
-  freezeFrame(pid: string, frame = '00'): Promise<string> {
+  private freezeFrame(pid: string, frame = '00'): Promise<string> {
     return this.send(`02${pid}${frame}`);
   }
 
@@ -179,27 +289,6 @@ export class OBDClient {
       }
     }
     return { frame, dtc, values };
-  }
-  clearDTCs(): Promise<string> {
-    return this.send('04');
-  }
-  livePid(pid: string): Promise<string> {
-    return this.send(`01${pid}`);
-  }
-  mode09(pid: string): Promise<string> {
-    return this.send(`09${pid}`, 6000);
-  }
-  batteryVoltage(): Promise<string> {
-    return this.send('ATRV');
-  }
-  protocolName(): Promise<string> {
-    return this.send('ATDP');
-  }
-  protocolNumber(): Promise<string> {
-    return this.send('ATDPN');
-  }
-  adapterVersion(): Promise<string> {
-    return this.send('ATI');
   }
 
   disconnect(): void {

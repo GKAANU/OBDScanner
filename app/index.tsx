@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -13,7 +13,6 @@ import { StatusBar as ConnStatusBar } from '../src/ui/StatusBar';
 import { CopyButton } from '../src/ui/CopyButton';
 import { DtcCard, type FreezeFrameState } from '../src/ui/DtcCard';
 import { useOBD } from '../src/obd/context';
-import { parseDTCs, parseReadiness, parseMode09Ascii, parseVIN, parseCVN } from '../src/obd/parsers';
 import { colors, fonts, fontSize, radius, spacing } from '../src/ui/theme';
 import { formatFullReport, formatTimestamp } from '../src/utils/format';
 
@@ -42,9 +41,9 @@ export default function TaniScreen() {
     setScanning(true);
     setScanError(null);
     try {
-      const stored = parseDTCs(await client.storedDTCs());
-      const pending = parseDTCs(await client.pendingDTCs());
-      const permanent = parseDTCs(await client.permanentDTCs());
+      const stored = await client.readDTCs('stored');
+      const pending = await client.readDTCs('pending');
+      const permanent = await client.readDTCs('permanent');
       setDtcs({ stored, pending, permanent });
       setFreezeFrame({ status: 'idle' });
       setLastScanAt(formatTimestamp());
@@ -55,34 +54,26 @@ export default function TaniScreen() {
     }
   }, [client, state]);
 
-  // Auto-scan on first ready transition.
+  // Auto-scan once per connection. (Guarding on `!lastScanAt` re-scanned in a
+  // tight loop whenever a scan failed.)
+  const autoScannedRef = useRef(false);
   useEffect(() => {
-    if (state === 'ready' && !lastScanAt && !scanning) {
+    if (state !== 'ready') {
+      autoScannedRef.current = false;
+      return;
+    }
+    if (!autoScannedRef.current) {
+      autoScannedRef.current = true;
       void scan();
     }
-  }, [state, lastScanAt, scanning, scan]);
+  }, [state, scan]);
 
   const buildFullReport = useCallback(async (): Promise<string> => {
     if (state !== 'ready') return '';
-    let vin: string | null = null;
-    let calId: string | null = null;
-    let cvn: string | null = null;
-    let ecuName: string | null = null;
+    const vehicle = await client.readVehicleInfo();
     let readiness: Array<{ name: string; supported: boolean; ready: boolean }> | undefined;
     try {
-      vin = parseVIN(await client.mode09('02'));
-    } catch {}
-    try {
-      calId = parseMode09Ascii(await client.mode09('04'), '4904');
-    } catch {}
-    try {
-      cvn = parseCVN(await client.mode09('06'));
-    } catch {}
-    try {
-      ecuName = parseMode09Ascii(await client.mode09('0A'), '490A');
-    } catch {}
-    try {
-      const r = parseReadiness(await client.livePid('01'));
+      const r = await client.readReadiness();
       if (r) {
         readiness = r.monitors.map((m) => ({ name: m.name, supported: m.supported, ready: m.ready }));
       }
@@ -95,7 +86,7 @@ export default function TaniScreen() {
       } catch {}
     }
     return formatFullReport({
-      vehicle: { vin, calId, cvn, ecuName },
+      vehicle,
       freezeFrame: ff?.dtc
         ? {
             dtc: ff.dtc,

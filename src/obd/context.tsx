@@ -9,10 +9,6 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OBDClient, type OBDConfig, DEFAULT_OBD_CONFIG } from './client';
-import {
-  detectOBDError,
-  parseBatteryVoltage,
-} from './parsers';
 import { DEFAULT_LIVE_PIDS } from './pid-registry';
 
 export type ConnectionState = 'idle' | 'connecting' | 'initializing' | 'ready' | 'error';
@@ -88,8 +84,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     try {
       const c = clientRef.current;
       if (!c.isConnected()) return;
-      const raw = await c.batteryVoltage();
-      const v = parseBatteryVoltage(raw);
+      const v = await c.readBatteryVoltage();
       if (v != null) setBattery(v);
     } catch {
       // ignore
@@ -107,17 +102,13 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       await c.init();
       // Capture protocol + adapter version + battery for the status bar.
       try {
-        const proto = await c.protocolName();
-        const err = detectOBDError(proto);
-        if (!err) setProtocolName(proto.trim());
+        setProtocolName(await c.readProtocolName());
       } catch {}
       try {
-        const ver = await c.adapterVersion();
-        setAdapterVersion(ver.trim());
+        setAdapterVersion(await c.readAdapterVersion());
       } catch {}
       try {
-        const raw = await c.batteryVoltage();
-        const v = parseBatteryVoltage(raw);
+        const v = await c.readBatteryVoltage();
         if (v != null) setBattery(v);
       } catch {}
       setState('ready');

@@ -64,6 +64,13 @@
     "plugins": [
       "expo-router",
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "cb22cec3-786e-49c4-9a04-14b175f87aca"
+      }
+    },
+    "owner": "gkaanu"
   }
 }

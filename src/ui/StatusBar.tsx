@@ -343,6 +343,8 @@ const styles = StyleSheet.create({
     fontSize: fontSize.m,
   },
   btnDanger: {
+    // Standalone in a column: flex: 1 from `btn` would collapse its height to 0.
+    flex: 0,
     backgroundColor: '#3b1414',
     borderWidth: 1,
     borderColor: colors.error,

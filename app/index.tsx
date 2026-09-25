@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar as ConnStatusBar } from '../src/ui/StatusBar';
 import { CopyButton } from '../src/ui/CopyButton';
+import { CopyLogButton } from '../src/ui/DiagLogSection';
 import { DtcCard, type FreezeFrameState } from '../src/ui/DtcCard';
 import { useOBD } from '../src/obd/context';
 import { userMessage } from '../src/obd/protocol';
@@ -20,7 +21,7 @@ import { formatFullReport, formatTimestamp } from '../src/utils/format';
 type DtcSet = { stored: string[]; pending: string[]; permanent: string[] };
 
 export default function TaniScreen() {
-  const { state, client, connect, protocolName, battery } = useOBD();
+  const { state, client, connect, protocolName, battery, errorMessage } = useOBD();
   const [dtcs, setDtcs] = useState<DtcSet>({ stored: [], pending: [], permanent: [] });
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -132,13 +133,30 @@ export default function TaniScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <ConnStatusBar />
+      <ConnStatusBar showError={false} />
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={scanning} onRefresh={scan} tintColor={colors.accent} />}
       >
         <Text style={styles.h1}>Tanı</Text>
         <Text style={styles.sub}>Hata kodlarını tara, kopyala, gerekirse Mode 04 ile sil.</Text>
+
+        {state === 'error' && errorMessage ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorCardText}>{errorMessage}</Text>
+            <View style={styles.errorActions}>
+              <Pressable
+                style={styles.retryBtn}
+                onPress={() => {
+                  void connect({ demo: false });
+                }}
+              >
+                <Text style={styles.retryLabel}>Tekrar dene</Text>
+              </Pressable>
+              <CopyLogButton />
+            </View>
+          </View>
+        ) : null}
 
         {state !== 'ready' ? (
           <View style={styles.callout}>
@@ -313,6 +331,37 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: fontSize.m,
     marginTop: -spacing.s,
+  },
+  errorCard: {
+    backgroundColor: '#1f0d0d',
+    borderRadius: radius.l,
+    borderWidth: 1,
+    borderColor: '#3b1414',
+    padding: spacing.l,
+    gap: spacing.s,
+  },
+  errorCardText: {
+    color: colors.error,
+    fontFamily: fonts.body,
+    fontSize: fontSize.m,
+  },
+  errorActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.m,
+    flexWrap: 'wrap',
+    marginTop: spacing.s,
+  },
+  retryBtn: {
+    backgroundColor: colors.accent,
+    paddingHorizontal: spacing.l,
+    paddingVertical: spacing.s + 2,
+    borderRadius: radius.m,
+  },
+  retryLabel: {
+    color: '#fff',
+    fontFamily: fonts.bodySemiBold,
+    fontSize: fontSize.s,
   },
   callout: {
     backgroundColor: colors.card,

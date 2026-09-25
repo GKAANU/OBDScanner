@@ -6,6 +6,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -16,8 +17,10 @@ import { colors, fonts, fontSize, radius, spacing } from './theme';
 import { useOBD } from '../obd/context';
 import { userMessage } from '../obd/protocol';
 import { HOST_PRESETS, sameEndpoint } from '../obd/presets';
+import { DiagLogSection } from './DiagLogSection';
 
-export function StatusBar() {
+/** `showError={false}` hides the red error strip (the Tanı tab shows its own error card). */
+export function StatusBar({ showError = true }: { showError?: boolean }) {
   const { state, config, protocolName, battery, errorMessage, statusText, connect, disconnect, setConfig, client } =
     useOBD();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -110,7 +113,7 @@ export function StatusBar() {
           </>
         ) : null}
       </Pressable>
-      {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+      {showError && errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
 
       <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
         <KeyboardAvoidingView
@@ -126,6 +129,11 @@ export function StatusBar() {
               Keyboard.dismiss();
             }}
           >
+            <ScrollView
+              contentContainerStyle={styles.sheetContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
             <Text style={styles.sheetTitle}>Bağlantı ayarları</Text>
 
             <View style={styles.flagRow}>
@@ -227,9 +235,12 @@ export function StatusBar() {
               </Pressable>
             ) : null}
 
+            <DiagLogSection />
+
             <Text style={styles.note}>
               Otova hiçbir veriyi internete göndermez. Tüm trafik sadece dongle’a gider.
             </Text>
+            </ScrollView>
           </Pressable>
         </Pressable>
         </KeyboardAvoidingView>
@@ -306,9 +317,12 @@ const styles = StyleSheet.create({
   },
   sheet: {
     backgroundColor: colors.card,
-    padding: spacing.xl,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
+    maxHeight: '90%',
+  },
+  sheetContent: {
+    padding: spacing.xl,
     gap: spacing.m,
     paddingBottom: spacing.xxxl,
   },

@@ -11,7 +11,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OBDClient, type OBDConfig, DEFAULT_OBD_CONFIG } from './client';
 import { DEFAULT_LIVE_PIDS } from './pid-registry';
 import { errorDetail as describeError, userMessage } from './protocol';
-import { TcpTransport } from './transport-tcp';
+import { TcpTransport, TCP_CONNECT_TIMEOUTS } from './transport-tcp';
+import { diagLog } from './diag-log';
 import { DemoTransport } from './transport-demo';
 
 export type ConnectionState = 'idle' | 'connecting' | 'initializing' | 'ready' | 'error';
@@ -45,7 +46,7 @@ const STORAGE_KEYS = {
 } as const;
 
 export function OBDProvider({ children }: { children: React.ReactNode }) {
-  const clientRef = useRef<OBDClient>(new OBDClient());
+  const clientRef = useRef<OBDClient>(new OBDClient({ log: diagLog }));
   const connectingRef = useRef(false);
   /** Bumped by every connect/disconnect; a connect attempt whose session is stale stops quietly. */
   const sessionRef = useRef(0);
@@ -120,6 +121,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const c = clientRef.current;
     c.setDisconnectListener((err) => {
+      diagLog.log(`link lost: ${describeError(err)}`);
       clearSession();
       setErrorMessage(userMessage(err));
       setErrorDetail(describeError(err));
@@ -140,9 +142,15 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     setErrorDetail(null);
     setStatusText(null);
     setState('connecting');
+    diagLog.startAttempt(
+      `connect start ${cfg.demo ? 'demo' : `${cfg.host}:${cfg.port}`} slowEcu=${!!cfg.slowEcu} ` +
+        `timeoutMs=${cfg.timeoutMs ?? '-'} tcp=${TCP_CONNECT_TIMEOUTS.connectTimeoutMs}/${TCP_CONNECT_TIMEOUTS.backstopMs}ms`
+    );
     try {
       // Demo mode never opens a socket: it talks to the in-memory simulator.
-      const transport = cfg.demo ? new DemoTransport() : new TcpTransport(cfg.host, cfg.port);
+      const transport = cfg.demo
+        ? new DemoTransport()
+        : new TcpTransport(cfg.host, cfg.port, { ...TCP_CONNECT_TIMEOUTS, log: diagLog });
       await c.connect(transport, cfg, {
         onRetry: () => {
           if (!stale()) setStatusText('Tekrar deneniyor…');
@@ -161,10 +169,15 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
         if (!stale()) setProtocolName(name);
       } catch {}
       if (stale()) return;
+      diagLog.log('state ready');
       setState('ready');
     } catch (e) {
       // The user pressed Kapat (or switched mode) mid-connect: not an error.
-      if (stale()) return;
+      if (stale()) {
+        diagLog.log('connect cancelled');
+        return;
+      }
+      diagLog.log(`state error: ${describeError(e)}`);
       setStatusText(null);
       setErrorMessage(userMessage(e));
       setErrorDetail(describeError(e));
@@ -179,6 +192,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
   }, [config, setConfig, clearSession]);
 
   const disconnect = useCallback(() => {
+    diagLog.log('user disconnect (Kapat)');
     sessionRef.current++;
     connectingRef.current = false;
     clientRef.current.disconnect();

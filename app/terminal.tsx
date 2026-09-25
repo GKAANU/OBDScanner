@@ -41,8 +41,8 @@ export default function TerminalScreen() {
       setBusy(true);
       const id = `${++nextId.current}`;
       try {
-        // Raw terminal: no automatic STOPPED / BUS INIT recovery.
-        const raw = await client.send(cmd, { recover: false });
+        // Raw terminal: no automatic STOPPED / BUS INIT recovery; logged to Bağlantı günlüğü.
+        const raw = await client.send(cmd, { recover: false, trace: true });
         pushEntry(setHistory, { id, command: cmd, response: raw, ok: true, ts: timeNow() });
       } catch (e) {
         pushEntry(setHistory, { id, command: cmd, response: userMessage(e), ok: false, ts: timeNow() });

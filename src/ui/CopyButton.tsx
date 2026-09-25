@@ -4,7 +4,8 @@ import { copyText } from './clipboard';
 import { colors, fonts, fontSize, radius, spacing } from './theme';
 
 type Props = {
-  text: string;
+  /** Text to copy, or a function that builds it on press. */
+  text: string | (() => Promise<string>);
   label?: string;
   variant?: 'primary' | 'ghost';
   compact?: boolean;
@@ -14,8 +15,9 @@ export function CopyButton({ text, label = 'Kopyala', variant = 'ghost', compact
   const [copied, flash] = useCopiedFlash(1500);
 
   const onPress = useCallback(async () => {
-    if (!text) return;
-    if (await copyText(text)) flash();
+    const value = typeof text === 'function' ? await text() : text;
+    if (!value) return;
+    if (await copyText(value)) flash();
   }, [text, flash]);
 
   return (

@@ -40,7 +40,8 @@ export class TcpTransport implements Transport {
       };
 
       const timer = setTimeout(() => {
-        fail(new OBDError('CONNECT_FAILED', `Timed out connecting to ${this.label}`));
+        const raw = `Timed out connecting to ${this.label} (JS timer)`;
+        fail(new OBDError('CONNECT_FAILED', raw, { step: 'tcp', raw }));
       }, this.connectTimeoutMs);
 
       try {
@@ -60,18 +61,22 @@ export class TcpTransport implements Transport {
           handlers.onData(typeof data === 'string' ? data : data.toString('latin1'));
         });
         // The iOS native side emits the error as a plain string, not an Error.
-        sock.on('error', (raw: unknown) => {
-          const err = raw instanceof Error ? raw : new Error(String(raw));
-          if (!opened) fail(new OBDError('CONNECT_FAILED', err.message));
+        sock.on('error', (payload: unknown) => {
+          const err = payload instanceof Error ? payload : new Error(String(payload));
+          if (!opened) fail(new OBDError('CONNECT_FAILED', err.message, { step: 'tcp', raw: err.message }));
           else notifyClose(err);
         });
         sock.on('close', () => {
           this.socket = null;
-          if (!opened) fail(new OBDError('CONNECT_FAILED', `Connection to ${this.label} closed`));
+          if (!opened) {
+            const raw = `Connection to ${this.label} closed`;
+            fail(new OBDError('CONNECT_FAILED', raw, { step: 'tcp', raw }));
+          }
           else notifyClose();
         });
       } catch (e) {
-        fail(e instanceof Error ? e : new Error(String(e)));
+        const raw = e instanceof Error ? e.message : String(e);
+        fail(new OBDError('CONNECT_FAILED', raw, { step: 'tcp', raw }));
       }
     });
   }

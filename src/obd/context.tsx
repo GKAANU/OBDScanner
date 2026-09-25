@@ -10,7 +10,7 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OBDClient, type OBDConfig, DEFAULT_OBD_CONFIG } from './client';
 import { DEFAULT_LIVE_PIDS } from './pid-registry';
-import { userMessage } from './protocol';
+import { errorDetail as describeError, userMessage } from './protocol';
 import { TcpTransport } from './transport-tcp';
 import { DemoTransport } from './transport-demo';
 
@@ -22,6 +22,8 @@ type Ctx = {
   setConfig: (c: OBDConfig) => void;
   state: ConnectionState;
   errorMessage: string | null;
+  /** Technical one-liner for the last error: `<step> · <code>/<kind> · <raw>`. */
+  errorDetail: string | null;
   protocolName: string | null;
   battery: number | null;
   adapterVersion: string | null;
@@ -48,6 +50,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfigState] = useState<OBDConfig>(DEFAULT_OBD_CONFIG);
   const [state, setState] = useState<ConnectionState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [protocolName, setProtocolName] = useState<string | null>(null);
   const [battery, setBattery] = useState<number | null>(null);
   const [adapterVersion, setAdapterVersion] = useState<string | null>(null);
@@ -116,6 +119,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     c.setDisconnectListener((err) => {
       clearSession();
       setErrorMessage(userMessage(err));
+      setErrorDetail(describeError(err));
       setState('error');
     });
     return () => c.setDisconnectListener(null);
@@ -130,6 +134,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     const cfg: OBDConfig = overrides ? { ...config, ...overrides } : config;
     if (overrides) setConfig(cfg);
     setErrorMessage(null);
+    setErrorDetail(null);
     setState('connecting');
     try {
       // Demo mode never opens a socket: it talks to the in-memory simulator.
@@ -158,6 +163,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       // The user pressed Kapat (or switched mode) mid-connect: not an error.
       if (stale()) return;
       setErrorMessage(userMessage(e));
+      setErrorDetail(describeError(e));
       setState('error');
       clearSession();
       try {
@@ -173,6 +179,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     connectingRef.current = false;
     clientRef.current.disconnect();
     setErrorMessage(null);
+    setErrorDetail(null);
     setState('idle');
     clearSession();
   }, [clearSession]);
@@ -202,6 +209,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       setConfig,
       state,
       errorMessage,
+      errorDetail,
       protocolName,
       battery,
       adapterVersion,
@@ -216,6 +224,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       setConfig,
       state,
       errorMessage,
+      errorDetail,
       protocolName,
       battery,
       adapterVersion,

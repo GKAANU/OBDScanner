@@ -5,6 +5,7 @@
  * No I/O and no state. OBDClient composes these; tests cover them directly.
  */
 import { detectOBDError } from './parsers';
+import { findMarker, responseMessages } from './response';
 
 /**
  * Split an accumulated receive buffer at the FIRST `>` prompt.
@@ -50,6 +51,15 @@ export function initProbeError(raw: string): string | null {
     return err;
   }
   return null;
+}
+
+/**
+ * True only if the init probe (`0100`) reply carries a `41 00` message.
+ * ERROR, ERR94, LV RESET, `?`, NO DATA, UNABLE TO CONNECT, BUS INIT ERROR,
+ * CAN ERROR and empty replies all count as failures.
+ */
+export function probeSucceeded(raw: string): boolean {
+  return responseMessages(raw).some((m) => findMarker(m, '4100') === 0);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { OBDClient } from './client';
-import { OBDError } from './protocol';
+import { OBDError, userMessage } from './protocol';
+import { DiagLog } from './diag-log';
 import type { Transport, TransportHandlers } from './transport';
 
 /**
@@ -281,35 +282,223 @@ describe('OBDClient disconnects', () => {
   });
 });
 
-describe('OBDClient init', () => {
-  const base: Record<string, string> = {
-    ATZ: '\r\rELM327 v1.5\r\r>',
-    ATE0: 'ATE0\rOK\r\r>',
-    ATL0: 'OK\r\r>',
-    ATS0: 'OK\r\r>',
-    ATH0: 'OK\r\r>',
-    ATSP0: 'OK\r\r>',
-    ATST92: 'OK\r\r>',
+/**
+ * Adapter scripted with absolute delays per command, recording write times.
+ * `reply(cmd, n)` returns [delayMs, chunk] pairs, [] to stay silent.
+ * A bare CR (the init flush) is recorded as ''.
+ */
+class InitTransport implements Transport {
+  readonly label = 'init';
+  handlers: TransportHandlers | null = null;
+  written: string[] = [];
+  times: number[] = [];
+  constructor(private reply: (cmd: string, n: number) => Array<[number, string]>) {}
+  async open(h: TransportHandlers): Promise<void> {
+    this.handlers = h;
+  }
+  emit(chunk: string, at = 0): void {
+    setTimeout(() => this.handlers?.onData(chunk), at);
+  }
+  write(data: string): void {
+    const cmd = data.replace(/\r$/, '');
+    this.written.push(cmd);
+    this.times.push(Date.now());
+    const n = this.written.filter((w) => w === cmd).length;
+    for (const [at, chunk] of this.reply(cmd, n)) this.emit(chunk, at);
+  }
+  close(): void {}
+}
+
+type Script = Record<string, Array<[number, string]>>;
+
+/** A healthy ELM327 + ECU; `over` replaces individual replies ([] = silent). */
+function adapter(over: Script = {}) {
+  const base: Script = {
+    '': [[5, '\r>']],
+    ATZ: [[500, '\r\rELM327 v1.5\r\r>']],
+    ATWS: [[300, '\r\rELM327 v1.5\r\r>']],
+    ATE0: [[5, 'ATE0\rOK\r\r>']],
+    ATI: [[5, 'ELM327 v1.5\r\r>']],
+    ATRV: [[5, '12.6V\r\r>']],
+    '0100': [[800, 'SEARCHING...\r41 00 BE 3E B8 11\r\r>']],
   };
+  return (cmd: string) => over[cmd] ?? base[cmd] ?? [[5, 'OK\r\r>']];
+}
 
-  it('succeeds when 0100 answers', async () => {
-    const { c, t } = await connected((cmd) => [base[cmd] ?? 'SEARCHING...\r4100BE3FA813\r\r>']);
-    await expect(c.init()).resolves.toBeUndefined();
-    expect(t.written).toEqual(['ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATSP0', '0100']);
+async function startInit(reply: (cmd: string, n: number) => Array<[number, string]>, slowEcu = false) {
+  const t = new InitTransport(reply);
+  const log = new DiagLog();
+  const c = new OBDClient({ log });
+  await c.connect(t, { timeoutMs: 5000, slowEcu });
+  const openedAt = Date.now();
+  const p = c.init();
+  let settledAt: number | null = null;
+  let error: unknown = null;
+  p.then(
+    () => (settledAt = Date.now()),
+    (e) => {
+      settledAt = Date.now();
+      error = e;
+    }
+  );
+  return {
+    t,
+    c,
+    p,
+    log,
+    openedAt,
+    settledAt: () => settledAt,
+    error: () => error,
+    lines: () => log.entries().map((e) => e.text),
+  };
+}
+
+const INIT_ORDER = ['', 'ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATI', 'ATRV', 'ATSP0', '0100'];
+
+describe('OBDClient init', () => {
+  beforeEach(() => jest.useFakeTimers({ now: 0 }));
+  afterEach(() => jest.useRealTimers());
+
+  it('writes the init sequence in order and returns ATI / ATRV results', async () => {
+    const r = await startInit(adapter());
+    await jest.advanceTimersByTimeAsync(20000);
+    await expect(r.p).resolves.toEqual({ adapterVersion: 'ELM327 v1.5', battery: 12.6 });
+    expect(r.t.written).toEqual(INIT_ORDER);
+    expect(r.t.times[0]).toBeGreaterThanOrEqual(r.openedAt + 300); // settle before the flush
   });
 
-  it('throws UNABLE_TO_CONNECT when the ignition is off', async () => {
-    const { c } = await connected((cmd) => [base[cmd] ?? 'SEARCHING...\rUNABLE TO CONNECT\r\r>']);
-    await expect(c.init()).rejects.toMatchObject({ code: 'UNABLE_TO_CONNECT' });
+  it('logs every step, TX and RX while connecting', async () => {
+    const r = await startInit(adapter());
+    await jest.advanceTimersByTimeAsync(20000);
+    await r.p;
+    const lines = r.lines();
+    for (const s of ['reset', 'setup', 'adapter-info', 'probe']) expect(lines).toContain(`step ${s}`);
+    expect(lines).toContain('TX ATZ\\r');
+    expect(lines.some((l) => /^RX \d+ms \\r\\rELM327 v1\.5$/.test(l) || /^RX \d+ms ELM327 v1\.5$/.test(l))).toBe(true);
+    expect(lines[lines.length - 1]).toMatch(/^init ok/);
   });
 
-  it('sends ATST in slow ECU mode', async () => {
-    const t = new FakeTransport((cmd) => [base[cmd] ?? '4100BE3FA813\r\r>']);
-    const c = new OBDClient();
-    await c.connect(t, { timeoutMs: 200, slowEcu: true });
-    await c.init();
-    expect(t.written).toContain('ATST92');
-    expect(t.written.indexOf('ATST92')).toBeLessThan(t.written.indexOf('ATSP0'));
+  it('sends ATST92 in slow ECU mode, after the setters and before ATSP0', async () => {
+    const r = await startInit(adapter(), true);
+    await jest.advanceTimersByTimeAsync(30000);
+    await r.p;
+    expect(r.t.written).toEqual(['', 'ATZ', 'ATE0', 'ATL0', 'ATS0', 'ATH0', 'ATST92', 'ATI', 'ATRV', 'ATSP0', '0100']);
+  });
+
+  it('accepts an ATZ banner that takes 3200 ms', async () => {
+    const r = await startInit(adapter({ ATZ: [[3200, '\r\rELM327 v1.5\r\r>']] }));
+    await jest.advanceTimersByTimeAsync(20000);
+    await expect(r.p).resolves.toBeDefined();
+    expect(r.t.written).not.toContain('ATWS');
+  });
+
+  it('falls back to ATWS when ATZ stays silent and continues if ATE0 answers', async () => {
+    const r = await startInit(adapter({ ATZ: [], ATWS: [] }));
+    await jest.advanceTimersByTimeAsync(20000);
+    await expect(r.p).resolves.toBeDefined();
+    expect(r.t.written.slice(0, 4)).toEqual(['', 'ATZ', 'ATWS', 'ATE0']);
+  });
+
+  it('fails the reset step within 14 s when the adapter never answers', async () => {
+    const r = await startInit(() => []);
+    await jest.advanceTimersByTimeAsync(30000);
+    expect(r.error()).toMatchObject({ code: 'TIMEOUT', step: 'reset' });
+    expect(r.settledAt()! - r.openedAt).toBeLessThanOrEqual(14000);
+    // No resync probes (ATI) cascading in between.
+    expect(r.t.written).toEqual(['', 'ATZ', 'ATWS', 'ATE0']);
+  });
+
+  it('never takes bytes that arrive before the flush prompt as the ATZ reply', async () => {
+    const r = await startInit(
+      adapter({ '': [[5, 'GARBAGE 41 00'], [20, '\r>']], ATZ: [[400, 'ATZ-BANNER\r\r>']] })
+    );
+    r.t.emit('HELLO>', 1); // unsolicited banner right after connect
+    await jest.advanceTimersByTimeAsync(20000);
+    await r.p;
+    const lines = r.lines();
+    const atzRx = lines[lines.indexOf('TX ATZ\\r') + 1];
+    expect(atzRx).toMatch(/^RX \d+ms ATZ-BANNER$/);
+    expect(lines.some((l) => l.includes('HELLO') && /drop|discard/.test(l))).toBe(true);
+    expect(lines.some((l) => l.includes('GARBAGE') && /drop|discard/.test(l))).toBe(true);
+    expect(lines.filter((l) => l.startsWith('RX')).some((l) => /GARBAGE|HELLO/.test(l))).toBe(false);
+  });
+
+  it('logs stray bytes without a prompt as dropped', async () => {
+    const r = await startInit(adapter({ '': [[5, 'NOISE']] }));
+    await jest.advanceTimersByTimeAsync(20000);
+    await r.p;
+    expect(r.lines()).toContain('drop 5 stray bytes: NOISE');
+  });
+
+  it('keeps AT setters that answer ? non-fatal', async () => {
+    const r = await startInit(adapter({ ATL0: [[5, '?\r\r>']], ATS0: [[5, '?\r\r>']] }));
+    await jest.advanceTimersByTimeAsync(20000);
+    await expect(r.p).resolves.toBeDefined();
+  });
+
+  it('treats ATI / ATRV timeouts as non-fatal', async () => {
+    const r = await startInit(adapter({ ATI: [], ATRV: [] }));
+    await jest.advanceTimersByTimeAsync(40000);
+    await expect(r.p).resolves.toEqual({ adapterVersion: null, battery: null });
+    expect(r.t.written).toContain('0100');
+  });
+
+  it('accepts a 0100 answer that takes 12 s (protocol search)', async () => {
+    const r = await startInit(adapter({ '0100': [[12000, 'SEARCHING...\r41 00 BE 3E B8 11\r\r>']] }));
+    await jest.advanceTimersByTimeAsync(30000);
+    await expect(r.p).resolves.toBeDefined();
+  });
+
+  it('fails the probe step 15 s after 0100 when the vehicle is silent', async () => {
+    const r = await startInit(adapter({ '0100': [] }));
+    await jest.advanceTimersByTimeAsync(40000);
+    expect(r.error()).toMatchObject({ code: 'TIMEOUT', step: 'probe' });
+    const sent = r.t.times[r.t.written.indexOf('0100')];
+    expect(r.settledAt()! - sent).toBe(15000);
+    expect(userMessage(r.error())).toMatch(/^Adaptör çalışıyor ama araç cevap vermedi/);
+  });
+
+  it.each([
+    ['ERROR'],
+    ['ERR94'],
+    ['?'],
+    ['LV RESET'],
+    ['NO DATA'],
+    ['SEARCHING...\rUNABLE TO CONNECT'],
+    ['BUS INIT: ...ERROR'],
+    ['CAN ERROR'],
+    [''],
+  ])('treats a 0100 reply of %j as a probe failure', async (reply) => {
+    const r = await startInit(adapter({ '0100': [[50, `${reply}\r\r>`]] }));
+    await jest.advanceTimersByTimeAsync(40000);
+    expect(r.error()).toMatchObject({ step: 'probe' });
+    expect(userMessage(r.error())).toMatch(/^Adaptör çalışıyor ama araç cevap vermedi/);
+  });
+
+  it('accepts a plain 41 00 BE 3E B8 11 probe reply', async () => {
+    const r = await startInit(adapter({ '0100': [[50, '41 00 BE 3E B8 11\r\r>']] }));
+    await jest.advanceTimersByTimeAsync(20000);
+    await expect(r.p).resolves.toBeDefined();
+  });
+
+  it('stops logging successful TX/RX after init', async () => {
+    const r = await startInit(adapter({ '010C': [[5, '41 0C 1A F8\r\r>']] }));
+    await jest.advanceTimersByTimeAsync(20000);
+    await r.p;
+    const before = r.log.entries().length;
+    const q = r.c.send('010C');
+    await jest.advanceTimersByTimeAsync(100);
+    await q;
+    expect(r.log.entries().length).toBe(before);
+  });
+});
+
+describe('OBDClient Mode 04 guard', () => {
+  it('follows 04 with ATI so a later bare CR cannot repeat it', async () => {
+    const { c, t } = await connected(() => ['44\r>']);
+    await expect(c.clearDTCs()).resolves.toBe('44');
+    await c.send('0100');
+    expect(t.written).toEqual(['04', 'ATI', '0100']);
   });
 });
 

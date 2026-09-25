@@ -151,20 +151,14 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       if (stale()) return;
       setStatusText(null);
       setState('initializing');
-      await c.init();
+      const info = await c.init();
       if (stale()) return;
-      // Capture protocol + adapter version + battery for the status bar.
+      // ATI / ATRV were read during init; only the protocol name is left.
+      setAdapterVersion(info.adapterVersion);
+      if (info.battery != null) setBattery(info.battery);
       try {
         const name = await c.readProtocolName();
         if (!stale()) setProtocolName(name);
-      } catch {}
-      try {
-        const ver = await c.readAdapterVersion();
-        if (!stale()) setAdapterVersion(ver);
-      } catch {}
-      try {
-        const v = await c.readBatteryVoltage();
-        if (v != null && !stale()) setBattery(v);
       } catch {}
       if (stale()) return;
       setState('ready');

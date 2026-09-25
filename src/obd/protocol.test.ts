@@ -181,7 +181,8 @@ describe('connect error messages and detail', () => {
     const e = new OBDError('PROBE_FAILED', 'm', { step: 'probe', raw: 'SEARCHING...\rUNABLE TO CONNECT' });
     expect(errorDetail(e)).toBe('probe · PROBE_FAILED · SEARCHING...\\rUNABLE TO CONNECT');
   });
-  it('keeps the mid-session disconnect message', () => {
+  it('keeps the mid-session disconnect message, also when the link drops during init', () => {
     expect(userMessage(new OBDError('CONNECTION_CLOSED', 'socket closed'))).toMatch(/bağlantı koptu/);
+    expect(userMessage(new OBDError('CONNECTION_CLOSED', 'x', { step: 'probe' }))).toMatch(/bağlantı koptu/);
   });
 });

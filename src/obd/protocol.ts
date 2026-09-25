@@ -226,15 +226,14 @@ export function userMessage(err: unknown): string {
 
   const kind = connectErrorKind(err);
   if (kind) return TCP_MESSAGES[kind];
+  // The link dropping mid-init is not "adapter/vehicle silent".
+  if (code === 'CONNECTION_CLOSED') return 'Adaptörle bağlantı koptu. Wi-Fi’ı kontrol edip tekrar bağlan.';
   if (step === 'reset' || step === 'setup') return RESET_MESSAGE;
   if (step === 'probe') return PROBE_MESSAGE;
   if (code === 'ADAPTER_NOT_FOUND') return NOT_FOUND_MESSAGE;
 
   if (code === 'TIMEOUT' || (!code && /timeout|timed out/i.test(msg))) {
     return 'Adaptör cevap vermedi. Wi-Fi bağlantısını ve adaptörü kontrol et.';
-  }
-  if (code === 'CONNECTION_CLOSED') {
-    return 'Adaptörle bağlantı koptu. Wi-Fi’ı kontrol edip tekrar bağlan.';
   }
   if (code === 'NOT_CONNECTED') {
     return 'Adaptöre bağlı değilsin. Önce bağlan.';

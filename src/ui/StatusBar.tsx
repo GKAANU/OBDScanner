@@ -17,7 +17,7 @@ import { useOBD } from '../obd/context';
 import { userMessage } from '../obd/protocol';
 
 export function StatusBar() {
-  const { state, config, protocolName, battery, errorMessage, connect, disconnect, setConfig, client } =
+  const { state, config, protocolName, battery, errorMessage, statusText, connect, disconnect, setConfig, client } =
     useOBD();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hostInput, setHostInput] = useState(config.host);
@@ -100,7 +100,7 @@ export function StatusBar() {
         </Text>
         <Text style={styles.sep}>·</Text>
         <Text style={styles.label} numberOfLines={1}>
-          {state === 'ready' && protocolName ? protocolName : stateLabel[state]}
+          {state === 'ready' && protocolName ? protocolName : statusText ?? stateLabel[state]}
         </Text>
         {battery != null ? (
           <>

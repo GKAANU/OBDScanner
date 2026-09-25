@@ -24,6 +24,8 @@ type Ctx = {
   errorMessage: string | null;
   /** Technical one-liner for the last error: `<step> · <code>/<kind> · <raw>`. */
   errorDetail: string | null;
+  /** Progress note while connecting (e.g. "Tekrar deneniyor…"), else null. */
+  statusText: string | null;
   protocolName: string | null;
   battery: number | null;
   adapterVersion: string | null;
@@ -51,6 +53,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<ConnectionState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  const [statusText, setStatusText] = useState<string | null>(null);
   const [protocolName, setProtocolName] = useState<string | null>(null);
   const [battery, setBattery] = useState<number | null>(null);
   const [adapterVersion, setAdapterVersion] = useState<string | null>(null);
@@ -135,12 +138,18 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     if (overrides) setConfig(cfg);
     setErrorMessage(null);
     setErrorDetail(null);
+    setStatusText(null);
     setState('connecting');
     try {
       // Demo mode never opens a socket: it talks to the in-memory simulator.
       const transport = cfg.demo ? new DemoTransport() : new TcpTransport(cfg.host, cfg.port);
-      await c.connect(transport, cfg);
+      await c.connect(transport, cfg, {
+        onRetry: () => {
+          if (!stale()) setStatusText('Tekrar deneniyor…');
+        },
+      });
       if (stale()) return;
+      setStatusText(null);
       setState('initializing');
       await c.init();
       if (stale()) return;
@@ -162,6 +171,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       // The user pressed Kapat (or switched mode) mid-connect: not an error.
       if (stale()) return;
+      setStatusText(null);
       setErrorMessage(userMessage(e));
       setErrorDetail(describeError(e));
       setState('error');
@@ -180,6 +190,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     clientRef.current.disconnect();
     setErrorMessage(null);
     setErrorDetail(null);
+    setStatusText(null);
     setState('idle');
     clearSession();
   }, [clearSession]);
@@ -210,6 +221,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       state,
       errorMessage,
       errorDetail,
+      statusText,
       protocolName,
       battery,
       adapterVersion,
@@ -225,6 +237,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       state,
       errorMessage,
       errorDetail,
+      statusText,
       protocolName,
       battery,
       adapterVersion,

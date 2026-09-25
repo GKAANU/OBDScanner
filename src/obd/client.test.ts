@@ -374,3 +374,86 @@ describe('OBDClient high-level reads', () => {
     expect(t.written).toEqual(['020200']);
   });
 });
+
+/** Transport whose open() fails with the scripted raw errors, then succeeds. */
+class FlakyOpenTransport implements Transport {
+  readonly label = 'flaky';
+  opens: number[] = [];
+  handlers: TransportHandlers | null = null;
+  constructor(private failures: string[]) {}
+  async open(h: TransportHandlers): Promise<void> {
+    this.opens.push(Date.now());
+    const raw = this.failures.shift();
+    if (raw !== undefined) throw new OBDError('CONNECT_FAILED', raw, { step: 'tcp', raw });
+    this.handlers = h;
+  }
+  write(): void {}
+  close(): void {}
+}
+
+describe('OBDClient TCP retry', () => {
+  beforeEach(() => jest.useFakeTimers({ now: 0 }));
+  afterEach(() => jest.useRealTimers());
+
+  it('retries once, 2500 ms later, after no_route', async () => {
+    const t = new FlakyOpenTransport(['No route to host']);
+    const onRetry = jest.fn();
+    const c = new OBDClient();
+    const p = c.connect(t, {}, { onRetry });
+    await jest.advanceTimersByTimeAsync(2500);
+    await expect(p).resolves.toBeUndefined();
+    expect(t.opens).toEqual([0, 2500]);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(c.isConnected()).toBe(true);
+  });
+
+  it('does not retry when the adapter refused the connection', async () => {
+    const t = new FlakyOpenTransport(['Connection refused']);
+    const c = new OBDClient();
+    await expect(c.connect(t)).rejects.toMatchObject({ code: 'CONNECT_FAILED', step: 'tcp', raw: 'Connection refused' });
+    expect(t.opens).toHaveLength(1);
+  });
+
+  it('gives up after the second no_route', async () => {
+    const t = new FlakyOpenTransport(['No route to host', 'No route to host']);
+    const c = new OBDClient();
+    const p = c.connect(t);
+    const done = expect(p).rejects.toMatchObject({ step: 'tcp', raw: 'No route to host' });
+    await jest.advanceTimersByTimeAsync(5000);
+    await done;
+    expect(t.opens).toEqual([0, 2500]);
+  });
+
+  it('retries native and JS timeouts too', async () => {
+    const t = new FlakyOpenTransport(['Operation timed out']);
+    const c = new OBDClient();
+    const p = c.connect(t);
+    await jest.advanceTimersByTimeAsync(2500);
+    await p;
+    expect(t.opens).toHaveLength(2);
+  });
+
+  it('never reconnects after a failure past the TCP step', async () => {
+    const t = new FlakyOpenTransport([]);
+    const c = new OBDClient();
+    await c.connect(t);
+    const listener = jest.fn();
+    c.setDisconnectListener(listener);
+    t.handlers?.onClose(new Error('socket closed'));
+    await jest.advanceTimersByTimeAsync(10000);
+    expect(t.opens).toHaveLength(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('disconnect() during the retry wait aborts without a second open', async () => {
+    const t = new FlakyOpenTransport(['No route to host']);
+    const c = new OBDClient();
+    const p = c.connect(t);
+    const done = expect(p).rejects.toMatchObject({ code: 'CONNECTION_CLOSED' });
+    await jest.advanceTimersByTimeAsync(1000);
+    c.disconnect();
+    await jest.advanceTimersByTimeAsync(5000);
+    await done;
+    expect(t.opens).toHaveLength(1);
+  });
+});

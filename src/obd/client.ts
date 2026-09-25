@@ -1,5 +1,14 @@
 import type { Transport } from './transport';
-import { atstCommand, initProbeError, OBDError, recoveryAction, takeResponse } from './protocol';
+import {
+  atstCommand,
+  classifyConnectError,
+  initProbeError,
+  OBDError,
+  recoveryAction,
+  takeResponse,
+  type ConnectErrorKind,
+} from './protocol';
+import { NOOP_LOGGER, type DiagLogger } from './diag-log';
 import {
   detectOBDError,
   parseBatteryVoltage,
@@ -37,7 +46,33 @@ export type SendOptions = {
   timeoutMs?: number;
   /** Apply STOPPED / BUS INIT recovery (default true). The Terminal disables it. */
   recover?: boolean;
+  /** Log TX/RX even after init (the Terminal sets this). */
+  trace?: boolean;
 };
+
+export type OBDClientOptions = {
+  /** Connection log sink ("Bağlantı günlüğü"). */
+  log?: DiagLogger;
+};
+
+export type ConnectHooks = {
+  /** Called right before the single automatic TCP retry is scheduled. */
+  onRetry?: () => void;
+};
+
+/** TCP failures worth one automatic retry (Wi-Fi may still be associating). */
+const RETRYABLE_TCP: ReadonlySet<ConnectErrorKind> = new Set(['no_route', 'net_unreachable', 'timeout']);
+/** Delay before the automatic TCP retry. */
+export const TCP_RETRY_DELAY_MS = 2500;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Normalize anything a transport's open() threw into a tcp-step OBDError. */
+function toTcpError(e: unknown): OBDError {
+  if (e instanceof OBDError) return e.step ? e : e.withStep('tcp');
+  const raw = e instanceof Error ? e.message : String(e);
+  return new OBDError('CONNECT_FAILED', raw, { step: 'tcp', raw });
+}
 
 export type FreezeFrameValue = { def: PIDDef; value: number | string };
 
@@ -125,6 +160,17 @@ export class OBDClient {
   private defaultTimeoutMs = DEFAULT_OBD_CONFIG.timeoutMs ?? 5000;
   private slowEcu = false;
   private disconnectListener: ((err: Error) => void) | null = null;
+  private readonly log: DiagLogger;
+  /**
+   * Log every TX/RX. True while connecting/initializing; after init only
+   * errors, timeouts and recovery actions are logged so live polling does
+   * not evict the connect lines from the ring buffer.
+   */
+  private verbose = true;
+
+  constructor(options: OBDClientOptions = {}) {
+    this.log = options.log ?? NOOP_LOGGER;
+  }
 
   /**
    * Called when the link drops without disconnect() being called
@@ -134,22 +180,47 @@ export class OBDClient {
     this.disconnectListener = listener;
   }
 
-  async connect(transport: Transport, config: Pick<OBDConfig, 'timeoutMs' | 'slowEcu'> = {}): Promise<void> {
+  /**
+   * Open the transport. A TCP failure of kind no_route / net_unreachable /
+   * timeout is retried exactly once after 2.5 s (refused is not: the host
+   * answered, the port is wrong). disconnect() aborts, also during the wait.
+   */
+  async connect(
+    transport: Transport,
+    config: Pick<OBDConfig, 'timeoutMs' | 'slowEcu'> = {},
+    hooks: ConnectHooks = {}
+  ): Promise<void> {
     if (this.transport || this.opening) throw new Error('Already connected');
     this.slowEcu = !!config.slowEcu;
     const base = config.timeoutMs ?? DEFAULT_OBD_CONFIG.timeoutMs ?? 5000;
     this.defaultTimeoutMs = this.slowEcu ? Math.max(base, SLOW_ECU_TIMEOUT_MS) : base;
     this.buffer = '';
     this.stale = false;
+    this.verbose = true;
 
     this.opening = transport;
-    try {
-      await this.openTransport(transport);
-    } catch (e) {
-      if (this.opening === transport) this.opening = null;
-      throw e;
+    const aborted = () => this.opening !== transport;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.openTransport(transport);
+        break;
+      } catch (e) {
+        if (aborted()) throw new OBDError('CONNECTION_CLOSED', 'Disconnected while connecting');
+        const err = toTcpError(e);
+        const kind = classifyConnectError(err.raw ?? err.message);
+        this.log.log(`tcp attempt ${attempt} failed: kind=${kind} raw=${err.raw ?? err.message}`);
+        if (attempt === 1 && RETRYABLE_TCP.has(kind)) {
+          this.log.log(`tcp retry in ${TCP_RETRY_DELAY_MS}ms`);
+          hooks.onRetry?.();
+          await sleep(TCP_RETRY_DELAY_MS);
+          if (aborted()) throw new OBDError('CONNECTION_CLOSED', 'Disconnected while connecting');
+          continue;
+        }
+        this.opening = null;
+        throw err;
+      }
     }
-    if (this.opening !== transport) {
+    if (aborted()) {
       // disconnect() was called while the link was opening.
       transport.close();
       throw new OBDError('CONNECTION_CLOSED', 'Disconnected while connecting');

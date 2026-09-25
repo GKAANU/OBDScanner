@@ -15,7 +15,7 @@ import { TcpTransport, TCP_CONNECT_TIMEOUTS } from './transport-tcp';
 import { diagLog } from './diag-log';
 import { DemoTransport } from './transport-demo';
 
-import { resolveConnectConfig, type ConnectionState } from './connect-config';
+import { canStartConnect, resolveConnectConfig, type ConnectionState } from './connect-config';
 
 export type { ConnectionState };
 
@@ -23,6 +23,8 @@ type Ctx = {
   client: OBDClient;
   config: OBDConfig;
   setConfig: (c: OBDConfig) => void;
+  /** True once saved settings finished loading (or failed to); connect is ignored before. */
+  hydrated: boolean;
   state: ConnectionState;
   errorMessage: string | null;
   /** Technical one-liner for the last error: `<step> · <code>/<kind> · <raw>`. */
@@ -55,6 +57,8 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
   const connectingRef = useRef(false);
   /** Bumped by every connect/disconnect; a connect attempt whose session is stale stops quietly. */
   const sessionRef = useRef(0);
+  const hydratedRef = useRef(false);
+  const [hydrated, setHydrated] = useState(false);
   const [config, setConfigState] = useState<OBDConfig>(DEFAULT_OBD_CONFIG);
   const [state, setState] = useState<ConnectionState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -91,6 +95,9 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         // ignore — fall back to defaults
+      } finally {
+        hydratedRef.current = true;
+        setHydrated(true);
       }
     })();
   }, []);
@@ -137,7 +144,9 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
 
   const connect = useCallback(async (overrides?: Partial<OBDConfig>) => {
     const c = clientRef.current;
-    if (c.isConnected() || connectingRef.current) return;
+    if (!canStartConnect({ hydrated: hydratedRef.current, connected: c.isConnected(), connecting: connectingRef.current })) {
+      return;
+    }
     connectingRef.current = true;
     const session = ++sessionRef.current;
     const stale = () => sessionRef.current !== session;
@@ -231,6 +240,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       client: clientRef.current,
       config,
       setConfig,
+      hydrated,
       state,
       errorMessage,
       errorDetail,
@@ -247,6 +257,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     [
       config,
       setConfig,
+      hydrated,
       state,
       errorMessage,
       errorDetail,

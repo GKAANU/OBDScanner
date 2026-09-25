@@ -1,4 +1,4 @@
-import { resolveConnectConfig } from './connect-config';
+import { canStartConnect, resolveConnectConfig } from './connect-config';
 import { DEFAULT_OBD_CONFIG, type OBDConfig } from './client';
 
 const savedDemo: OBDConfig = { ...DEFAULT_OBD_CONFIG, host: '192.168.0.11', demo: true };
@@ -18,5 +18,16 @@ describe('resolveConnectConfig', () => {
   it('keeps saved fields the caller did not override', () => {
     const cfg = resolveConnectConfig({ ...savedDemo, slowEcu: true }, { demo: false });
     expect(cfg).toMatchObject({ host: '192.168.0.11', slowEcu: true });
+  });
+});
+
+describe('canStartConnect', () => {
+  it('waits for settings hydration', () => {
+    expect(canStartConnect({ hydrated: false, connected: false, connecting: false })).toBe(false);
+    expect(canStartConnect({ hydrated: true, connected: false, connecting: false })).toBe(true);
+  });
+  it('refuses while connected or connecting', () => {
+    expect(canStartConnect({ hydrated: true, connected: true, connecting: false })).toBe(false);
+    expect(canStartConnect({ hydrated: true, connected: false, connecting: true })).toBe(false);
   });
 });

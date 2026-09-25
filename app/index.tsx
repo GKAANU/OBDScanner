@@ -22,12 +22,14 @@ import { formatFullReport, formatTimestamp } from '../src/utils/format';
 type DtcSet = { stored: string[]; pending: string[]; permanent: string[] };
 
 export default function TaniScreen() {
-  const { state, client, connect, protocolName, battery, errorMessage, errorDetail } = useOBD();
+  const { state, client, connect, protocolName, battery, errorMessage, errorDetail, hydrated } = useOBD();
   const [dtcs, setDtcs] = useState<DtcSet>({ stored: [], pending: [], permanent: [] });
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [lastScanAt, setLastScanAt] = useState<string | null>(null);
   const busyConnecting = state === 'connecting' || state === 'initializing';
+  // Connect buttons wait until saved settings are loaded.
+  const connectDisabled = busyConnecting || !hydrated;
   const [freezeFrame, setFreezeFrame] = useState<FreezeFrameState>({ status: 'idle' });
 
   const loadFreezeFrame = useCallback(async () => {
@@ -147,7 +149,8 @@ export default function TaniScreen() {
             <ConnectErrorText message={errorMessage} detail={errorDetail} />
             <View style={styles.errorActions}>
               <Pressable
-                style={styles.retryBtn}
+                style={[styles.retryBtn, !hydrated && styles.scanBtnDisabled]}
+                disabled={!hydrated}
                 onPress={() => {
                   void connect({ demo: false });
                 }}
@@ -166,8 +169,8 @@ export default function TaniScreen() {
               Önce iPhone’un Wi-Fi’ını OBD-II adaptörüne bağla, sonra Bağlan’a bas.
             </Text>
             <Pressable
-              style={[styles.connectBtn, busyConnecting && styles.scanBtnDisabled]}
-              disabled={busyConnecting}
+              style={[styles.connectBtn, connectDisabled && styles.scanBtnDisabled]}
+              disabled={connectDisabled}
               onPress={() => {
                 void connect({ demo: false });
               }}
@@ -179,8 +182,8 @@ export default function TaniScreen() {
               )}
             </Pressable>
             <Pressable
-              style={[styles.demoBtn, busyConnecting && styles.scanBtnDisabled]}
-              disabled={busyConnecting}
+              style={[styles.demoBtn, connectDisabled && styles.scanBtnDisabled]}
+              disabled={connectDisabled}
               onPress={() => {
                 void connect({ demo: true });
               }}

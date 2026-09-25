@@ -34,6 +34,7 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
     disconnect,
     setConfig,
     client,
+    hydrated,
   } = useOBD();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hostInput, setHostInput] = useState(config.host);
@@ -168,6 +169,7 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
               </View>
               <Switch
                 value={!!config.demo}
+                disabled={!hydrated}
                 onValueChange={(v) => {
                   if (state !== 'idle' && state !== 'error') disconnect();
                   if (v) {
@@ -242,7 +244,11 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
                 <Text style={styles.btnPrimaryLabel}>Kaydet</Text>
               </Pressable>
               {state === 'idle' || state === 'error' ? (
-                <Pressable onPress={onConnect} style={[styles.btn, styles.btnGhost]}>
+                <Pressable
+                  onPress={onConnect}
+                  disabled={!hydrated}
+                  style={[styles.btn, styles.btnGhost, !hydrated && styles.btnDisabled]}
+                >
                   <Text style={styles.btnGhostLabel}>Bağlan</Text>
                 </Pressable>
               ) : (
@@ -431,6 +437,9 @@ const styles = StyleSheet.create({
     color: colors.body,
     fontFamily: fonts.bodySemiBold,
     fontSize: fontSize.m,
+  },
+  btnDisabled: {
+    opacity: 0.5,
   },
   btnDanger: {
     // Standalone in a column: flex: 1 from `btn` would collapse its height to 0.

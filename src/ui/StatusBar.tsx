@@ -15,6 +15,7 @@ import {
 import { colors, fonts, fontSize, radius, spacing } from './theme';
 import { useOBD } from '../obd/context';
 import { userMessage } from '../obd/protocol';
+import { HOST_PRESETS, sameEndpoint } from '../obd/presets';
 
 export function StatusBar() {
   const { state, config, protocolName, battery, errorMessage, statusText, connect, disconnect, setConfig, client } =
@@ -141,6 +142,26 @@ export function StatusBar() {
                   setConfig({ ...config, demo: v });
                 }}
               />
+            </View>
+
+            <Text style={styles.fieldLabel}>Sık kullanılan adresler</Text>
+            <View style={styles.chips}>
+              {HOST_PRESETS.map((p) => {
+                const active = sameEndpoint(p, { host: hostInput.trim(), port: parseInt(portInput, 10) });
+                return (
+                  <Pressable
+                    key={p.label}
+                    onPress={() => {
+                      // Fill the fields only; the user still taps Bağlan.
+                      setHostInput(p.host);
+                      setPortInput(String(p.port));
+                    }}
+                    style={[styles.chip, active && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{p.label}</Text>
+                  </Pressable>
+                );
+              })}
             </View>
 
             <Text style={styles.fieldLabel}>Host</Text>
@@ -312,6 +333,30 @@ const styles = StyleSheet.create({
     padding: spacing.m,
     fontFamily: 'GeistMono_400Regular',
     fontSize: fontSize.l,
+  },
+  chips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.s,
+  },
+  chip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bg,
+    borderRadius: radius.s,
+    paddingHorizontal: spacing.s,
+    paddingVertical: spacing.xs,
+  },
+  chipActive: {
+    borderColor: colors.accent,
+  },
+  chipLabel: {
+    color: colors.mutedStrong,
+    fontFamily: fonts.mono,
+    fontSize: fontSize.xs,
+  },
+  chipLabelActive: {
+    color: colors.body,
   },
   buttonRow: {
     flexDirection: 'row',

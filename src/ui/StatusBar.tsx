@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Keyboard,
@@ -35,6 +35,7 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
     setConfig,
     client,
     hydrated,
+    autoDetect,
   } = useOBD();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hostInput, setHostInput] = useState(config.host);
@@ -49,6 +50,12 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
     ready: 'Hazır',
     error: 'Hata',
   };
+
+  // Otomatik bul (or a preset connect) saved a new endpoint: show it.
+  useEffect(() => {
+    setHostInput(config.host);
+    setPortInput(String(config.port));
+  }, [config.host, config.port]);
 
   const openSettings = () => {
     setHostInput(config.host);
@@ -85,6 +92,18 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
     setSettingsOpen(false);
     // Real adapter only: a demo flag saved earlier must not leak in here.
     void connect({ ...ep, demo: false });
+  };
+
+  const onAutoDetect = () => {
+    Keyboard.dismiss();
+    // Start from what is typed when it is valid, else from the saved endpoint.
+    const port = parseInt(portInput, 10);
+    const typed =
+      hostInput.trim() && port > 0 && port <= 65535
+        ? { host: hostInput.trim(), port }
+        : { host: config.host, port: config.port };
+    // The sheet stays open to show progress; Kapat cancels the scan.
+    void autoDetect(typed);
   };
 
   const onClearDTCs = () => {
@@ -264,6 +283,19 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
               )}
             </View>
 
+            {state === 'idle' || state === 'error' ? (
+              <Pressable
+                onPress={onAutoDetect}
+                disabled={!hydrated}
+                style={[styles.btn, styles.btnGhost, styles.btnStandalone, !hydrated && styles.btnDisabled]}
+              >
+                <Text style={styles.btnGhostLabel}>Otomatik bul</Text>
+              </Pressable>
+            ) : null}
+            {(state === 'connecting' || state === 'initializing') && statusText ? (
+              <Text style={styles.progress}>{statusText}</Text>
+            ) : null}
+
             {state === 'ready' ? (
               <Pressable onPress={onClearDTCs} style={[styles.btn, styles.btnDanger]}>
                 <Text style={styles.btnDangerLabel}>DTC’leri sil (Mode 04)</Text>
@@ -437,6 +469,15 @@ const styles = StyleSheet.create({
     color: colors.body,
     fontFamily: fonts.bodySemiBold,
     fontSize: fontSize.m,
+  },
+  btnStandalone: {
+    // In a column: flex: 1 from `btn` would collapse its height to 0.
+    flex: 0,
+  },
+  progress: {
+    color: colors.mutedStrong,
+    fontFamily: fonts.mono,
+    fontSize: fontSize.s,
   },
   btnDisabled: {
     opacity: 0.5,

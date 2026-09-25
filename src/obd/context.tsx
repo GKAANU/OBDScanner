@@ -11,7 +11,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OBDClient, type OBDConfig, DEFAULT_OBD_CONFIG } from './client';
 import { DEFAULT_LIVE_PIDS } from './pid-registry';
 import { errorDetail as describeError, userMessage } from './protocol';
-import { TcpTransport, TCP_CONNECT_TIMEOUTS } from './transport-tcp';
+import { TcpTransport, TCP_CONNECT_TIMEOUTS, TCP_SCAN_TIMEOUTS } from './transport-tcp';
+import { hostPort, type Endpoint } from './presets';
+import {
+  probeAdapter,
+  scanCandidates,
+  scanFailureDetail,
+  scanFailureMessage,
+  scanForAdapter,
+  type ScanResult,
+} from './scan';
 import { diagLog } from './diag-log';
 import { DemoTransport } from './transport-demo';
 
@@ -41,6 +50,11 @@ type Ctx = {
    * only with an explicit `{ demo: true }`.
    */
   connect: (overrides?: Partial<OBDConfig>) => Promise<void>;
+  /**
+   * Otomatik bul: probe `typed` (unless it is a preset) and the presets one
+   * by one; connect to the first adapter that answers. disconnect() cancels.
+   */
+  autoDetect: (typed: Endpoint) => Promise<void>;
   disconnect: () => void;
   refreshBattery: () => Promise<void>;
 };
@@ -57,6 +71,8 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
   const connectingRef = useRef(false);
   /** Bumped by every connect/disconnect; a connect attempt whose session is stale stops quietly. */
   const sessionRef = useRef(0);
+  /** Aborts a running Otomatik bul scan. */
+  const scanAbortRef = useRef<AbortController | null>(null);
   const hydratedRef = useRef(false);
   const [hydrated, setHydrated] = useState(false);
   const [config, setConfigState] = useState<OBDConfig>(DEFAULT_OBD_CONFIG);
@@ -142,7 +158,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     return () => c.setDisconnectListener(null);
   }, [clearSession]);
 
-  const connect = useCallback(async (overrides?: Partial<OBDConfig>) => {
+  const startConnect = useCallback(async (overrides: Partial<OBDConfig> | undefined, status: string | null) => {
     const c = clientRef.current;
     if (!canStartConnect({ hydrated: hydratedRef.current, connected: c.isConnected(), connecting: connectingRef.current })) {
       return;
@@ -154,7 +170,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     if (overrides || cfg.demo !== config.demo) setConfig(cfg);
     setErrorMessage(null);
     setErrorDetail(null);
-    setStatusText(null);
+    setStatusText(status);
     setState('connecting');
     diagLog.startAttempt(
       `connect start ${cfg.demo ? 'demo' : `${cfg.host}:${cfg.port}`} slowEcu=${!!cfg.slowEcu} ` +
@@ -205,8 +221,65 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     }
   }, [config, setConfig, clearSession]);
 
+  const connect = useCallback(
+    (overrides?: Partial<OBDConfig>) => startConnect(overrides, null),
+    [startConnect]
+  );
+
+  const autoDetect = useCallback(
+    async (typed: Endpoint) => {
+      const c = clientRef.current;
+      if (!canStartConnect({ hydrated: hydratedRef.current, connected: c.isConnected(), connecting: connectingRef.current })) {
+        return;
+      }
+      connectingRef.current = true;
+      const session = ++sessionRef.current;
+      const stale = () => sessionRef.current !== session;
+      const ac = new AbortController();
+      scanAbortRef.current = ac;
+      setErrorMessage(null);
+      setErrorDetail(null);
+      setStatusText(null);
+      setState('connecting');
+      diagLog.startAttempt(`auto-detect start typed=${hostPort(typed)}`);
+      let result: ScanResult;
+      try {
+        result = await scanForAdapter(
+          scanCandidates(typed),
+          // Sequential: scanForAdapter awaits each probe before the next.
+          (ep, signal) =>
+            probeAdapter(new TcpTransport(ep.host, ep.port, { ...TCP_SCAN_TIMEOUTS, log: diagLog }), signal),
+          {
+            signal: ac.signal,
+            log: diagLog,
+            onProgress: (ep, i, n) => {
+              if (!stale()) setStatusText(`Aranıyor: ${hostPort(ep)} (${i}/${n})`);
+            },
+          }
+        );
+      } finally {
+        if (scanAbortRef.current === ac) scanAbortRef.current = null;
+      }
+      if (stale()) return; // cancelled via Kapat: disconnect() already reset the state
+      connectingRef.current = false;
+      if (result.found) {
+        const { host, port } = result.found;
+        await startConnect({ host, port, demo: false }, `Adaptör bulundu: ${hostPort(result.found)}. Bağlanılıyor…`);
+        return;
+      }
+      diagLog.log(`state error: ${scanFailureDetail(result)}`);
+      setStatusText(null);
+      setErrorMessage(scanFailureMessage(result));
+      setErrorDetail(scanFailureDetail(result));
+      setState('error');
+    },
+    [startConnect]
+  );
+
   const disconnect = useCallback(() => {
     diagLog.log('user disconnect (Kapat)');
+    scanAbortRef.current?.abort();
+    scanAbortRef.current = null;
     sessionRef.current++;
     connectingRef.current = false;
     clientRef.current.disconnect();
@@ -251,6 +324,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       selectedLivePids,
       setSelectedLivePids,
       connect,
+      autoDetect,
       disconnect,
       refreshBattery,
     }),
@@ -268,6 +342,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       selectedLivePids,
       setSelectedLivePids,
       connect,
+      autoDetect,
       disconnect,
       refreshBattery,
     ]

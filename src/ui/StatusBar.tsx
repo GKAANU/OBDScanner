@@ -18,11 +18,23 @@ import { useOBD } from '../obd/context';
 import { userMessage } from '../obd/protocol';
 import { HOST_PRESETS, sameEndpoint } from '../obd/presets';
 import { DiagLogSection } from './DiagLogSection';
+import { ConnectErrorText } from './ConnectError';
 
 /** `showError={false}` hides the red error strip (the Tanı tab shows its own error card). */
 export function StatusBar({ showError = true }: { showError?: boolean }) {
-  const { state, config, protocolName, battery, errorMessage, statusText, connect, disconnect, setConfig, client } =
-    useOBD();
+  const {
+    state,
+    config,
+    protocolName,
+    battery,
+    errorMessage,
+    errorDetail,
+    statusText,
+    connect,
+    disconnect,
+    setConfig,
+    client,
+  } = useOBD();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hostInput, setHostInput] = useState(config.host);
   const [portInput, setPortInput] = useState(String(config.port));
@@ -113,7 +125,11 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
           </>
         ) : null}
       </Pressable>
-      {showError && errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+      {showError && errorMessage ? (
+        <View style={styles.error}>
+          <ConnectErrorText message={errorMessage} detail={errorDetail} compact />
+        </View>
+      ) : null}
 
       <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
         <KeyboardAvoidingView
@@ -135,6 +151,12 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
               showsVerticalScrollIndicator={false}
             >
             <Text style={styles.sheetTitle}>Bağlantı ayarları</Text>
+
+            {state === 'error' && errorMessage ? (
+              <View style={styles.sheetError}>
+                <ConnectErrorText message={errorMessage} detail={errorDetail} compact />
+              </View>
+            ) : null}
 
             <View style={styles.flagRow}>
               <View style={{ flex: 1 }}>
@@ -303,12 +325,14 @@ const styles = StyleSheet.create({
     fontSize: fontSize.m,
   },
   error: {
-    color: colors.error,
     backgroundColor: '#1f0d0d',
     paddingHorizontal: spacing.l,
     paddingVertical: spacing.s,
-    fontFamily: fonts.body,
-    fontSize: fontSize.s,
+  },
+  sheetError: {
+    backgroundColor: '#1f0d0d',
+    borderRadius: radius.m,
+    padding: spacing.m,
   },
   backdrop: {
     flex: 1,

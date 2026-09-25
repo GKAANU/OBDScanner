@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar as ConnStatusBar } from '../src/ui/StatusBar';
 import { CopyButton } from '../src/ui/CopyButton';
 import { CopyLogButton } from '../src/ui/DiagLogSection';
+import { ConnectErrorText } from '../src/ui/ConnectError';
 import { DtcCard, type FreezeFrameState } from '../src/ui/DtcCard';
 import { useOBD } from '../src/obd/context';
 import { userMessage } from '../src/obd/protocol';
@@ -21,7 +22,7 @@ import { formatFullReport, formatTimestamp } from '../src/utils/format';
 type DtcSet = { stored: string[]; pending: string[]; permanent: string[] };
 
 export default function TaniScreen() {
-  const { state, client, connect, protocolName, battery, errorMessage } = useOBD();
+  const { state, client, connect, protocolName, battery, errorMessage, errorDetail } = useOBD();
   const [dtcs, setDtcs] = useState<DtcSet>({ stored: [], pending: [], permanent: [] });
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -143,7 +144,7 @@ export default function TaniScreen() {
 
         {state === 'error' && errorMessage ? (
           <View style={styles.errorCard}>
-            <Text style={styles.errorCardText}>{errorMessage}</Text>
+            <ConnectErrorText message={errorMessage} detail={errorDetail} />
             <View style={styles.errorActions}>
               <Pressable
                 style={styles.retryBtn}
@@ -339,11 +340,6 @@ const styles = StyleSheet.create({
     borderColor: '#3b1414',
     padding: spacing.l,
     gap: spacing.s,
-  },
-  errorCardText: {
-    color: colors.error,
-    fontFamily: fonts.body,
-    fontSize: fontSize.m,
   },
   errorActions: {
     flexDirection: 'row',

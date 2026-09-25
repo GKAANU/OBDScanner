@@ -15,7 +15,9 @@ import { TcpTransport, TCP_CONNECT_TIMEOUTS } from './transport-tcp';
 import { diagLog } from './diag-log';
 import { DemoTransport } from './transport-demo';
 
-export type ConnectionState = 'idle' | 'connecting' | 'initializing' | 'ready' | 'error';
+import { resolveConnectConfig, type ConnectionState } from './connect-config';
+
+export type { ConnectionState };
 
 type Ctx = {
   client: OBDClient;
@@ -32,7 +34,10 @@ type Ctx = {
   adapterVersion: string | null;
   selectedLivePids: string[];
   setSelectedLivePids: (ids: string[]) => void;
-  /** Connect using the saved config; `overrides` (e.g. { demo: true }) are saved first. */
+  /**
+   * Connect using the saved config plus `overrides` (saved first). Demo mode
+   * only with an explicit `{ demo: true }`.
+   */
   connect: (overrides?: Partial<OBDConfig>) => Promise<void>;
   disconnect: () => void;
   refreshBattery: () => Promise<void>;
@@ -136,8 +141,8 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     connectingRef.current = true;
     const session = ++sessionRef.current;
     const stale = () => sessionRef.current !== session;
-    const cfg: OBDConfig = overrides ? { ...config, ...overrides } : config;
-    if (overrides) setConfig(cfg);
+    const cfg = resolveConnectConfig(config, overrides);
+    if (overrides || cfg.demo !== config.demo) setConfig(cfg);
     setErrorMessage(null);
     setErrorDetail(null);
     setStatusText(null);

@@ -82,7 +82,8 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
     if (!ep) return;
     Keyboard.dismiss();
     setSettingsOpen(false);
-    void connect(ep);
+    // Real adapter only: a demo flag saved earlier must not leak in here.
+    void connect({ ...ep, demo: false });
   };
 
   const onClearDTCs = () => {
@@ -169,7 +170,13 @@ export function StatusBar({ showError = true }: { showError?: boolean }) {
                 value={!!config.demo}
                 onValueChange={(v) => {
                   if (state !== 'idle' && state !== 'error') disconnect();
-                  setConfig({ ...config, demo: v });
+                  if (v) {
+                    // Demo is entered only on explicit request: start it now.
+                    setSettingsOpen(false);
+                    void connect({ demo: true });
+                  } else {
+                    setConfig({ ...config, demo: false });
+                  }
                 }}
               />
             </View>

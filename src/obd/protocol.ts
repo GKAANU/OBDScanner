@@ -175,6 +175,11 @@ const TCP_MESSAGES: Record<ConnectErrorKind, string> = {
   other: 'Adaptöre bağlanılamadı. Wi-Fi ağını, IP adresini ve portu kontrol et.',
 };
 
+/** Turkish copy for a TCP connect failure of the given kind. */
+export function connectMessage(kind: ConnectErrorKind): string {
+  return TCP_MESSAGES[kind];
+}
+
 export const RESET_MESSAGE =
   'Wi-Fi bağlantısı kuruldu ama adaptör komutlara cevap vermiyor. Adaptörü söküp tak, 10 saniye bekle ve tekrar dene.';
 export const PROBE_MESSAGE =

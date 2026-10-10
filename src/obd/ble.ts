@@ -1,6 +1,7 @@
 import { BleManager, State, type Device } from 'react-native-ble-plx';
 import { isLikelyObd } from './ble-profile';
 import { OBDError } from './protocol';
+import { diagLog } from './diag-log';
 
 /**
  * One BleManager for the app (the library wants a singleton). Created
@@ -52,6 +53,7 @@ export function scanBle(onUpdate: (items: BleScanItem[]) => void, onError: (e: u
     );
     onUpdate(list);
   };
+  diagLog.startAttempt('ble scan start');
   void m
     .startDeviceScan(null, { allowDuplicates: false }, async (error, device: Device | null) => {
       if (stopped) return;
@@ -61,9 +63,13 @@ export function scanBle(onUpdate: (items: BleScanItem[]) => void, onError: (e: u
       }
       if (!device) return;
       const name = device.localName ?? device.name ?? '';
-      // Nameless devices are mostly phones, watches and beacons; keep them only if they advertise an OBD service.
       const likely = isLikelyObd(name, device.serviceUUIDs);
-      if (!name && !likely) return;
+      // Some cheap clones advertise no name: keep nameless devices too (listed under "Diğer cihazlar").
+      if (!seen.has(device.id)) {
+        diagLog.log(
+          `ble seen "${name || '-'}" rssi=${device.rssi ?? '?'} services=${(device.serviceUUIDs ?? []).map((u) => u.slice(4, 8)).join(',') || '-'}${likely ? ' likely' : ''}`
+        );
+      }
       seen.set(device.id, { id: device.id, name: name || 'Adsız cihaz', rssi: device.rssi ?? null, likely });
       emit();
     })

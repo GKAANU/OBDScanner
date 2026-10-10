@@ -274,6 +274,7 @@ function BleStep({
             'Dongle takılı ve kontak açık mı? Işığı yanıyor olmalı.',
             "Car Scanner gibi başka bir uygulama bağlıysa o uygulamayı tamamen kapat.",
             "Daha önce iPhone Ayarlar > Bluetooth'ta eşleştirdiysen orada 'Bu aygıtı unut' de.",
+            "İsmi görünmeyen bir adaptör olabilir: 'Diğer cihazlar'da sinyali güçlü 'Adsız cihaz'ı dene.",
             'Hâlâ yoksa adaptörün klasik Bluetooth (2.0) olabilir: iPhone bu türe uygulamaların bağlanmasına izin vermez.',
           ].map((t) => (
             <Text key={t} style={s.tip}>
@@ -282,6 +283,7 @@ function BleStep({
           ))}
           <View style={s.tipActions}>
             {unsure ? <Button label="Wi-Fi dongle mı? Dene" variant="secondary" compact onPress={onWifi} /> : null}
+            <CopyLogButton compact />
             <LinkButton label="Uyumlu dongle'lar" onPress={onCompat} />
           </View>
         </Card>

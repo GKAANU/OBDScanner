@@ -144,11 +144,15 @@ export default function GarajScreen() {
     setKmSheet(false);
   };
 
-  const nextAlt =
+  const nextAlt = [
+    next?.row.status.assumed ? 'tahmini' : null,
     next && next.row.status.leftKm != null && next.row.status.leftDays != null
       ? `veya ${durationText(Math.max(0, next.row.status.leftDays))}`
-      : '';
-  const nextLeft = next ? leftLine(next.row.status).replace(/ veya .*kaldı$/, ' kaldı') : '';
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const nextLeft = next ? leftLine(next.row.status).replace(' · tahmini', '').replace(/ veya .*kaldı$/, ' kaldı') : '';
   const nextColor = next?.row.status.key === 'over' ? colors.error : colors.amber;
 
   return (

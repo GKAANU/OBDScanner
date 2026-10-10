@@ -164,7 +164,7 @@ export const STATUS_LABEL: Record<MaintStatusKey, string> = {
   over: 'Gecikmiş',
   soon: 'Yaklaşıyor',
   ok: 'İyi',
-  unknown: 'Bilinmiyor',
+  unknown: 'Kayıt yok',
 };
 
 /** Latest record (by km, then date) that includes `itemId`. */
@@ -193,23 +193,32 @@ export function maintStatus(
 ): MaintStatus {
   let last = lastDone(item.id, records);
   let assumed = false;
+  let timeKnown = true;
   if (!last) {
+    // No record: estimate that the item was done on schedule, i.e. at the
+    // last whole interval (48.612 km, every 15.000 -> last at 45.000).
     const factoryDate = vehicle.year ? `${vehicle.year}-01-01` : null;
-    const kmOk = !item.intervalKm || vehicle.km < item.intervalKm;
-    const timeOk =
-      !item.intervalMonths ||
-      (factoryDate != null && daysBetween(factoryDate, today) < item.intervalMonths * DAYS_PER_MONTH);
-    if (!kmOk || !timeOk) {
+    if (!item.intervalKm && !factoryDate) {
       return { key: 'unknown', leftKm: null, leftDays: null, used: 0, last: null, assumed: false };
     }
-    last = { date: factoryDate ?? today, km: 0 };
+    const lastKm = item.intervalKm ? Math.floor(Math.max(0, vehicle.km) / item.intervalKm) * item.intervalKm : 0;
+    let lastDate = today;
+    if (item.intervalMonths && factoryDate) {
+      const span = Math.round(item.intervalMonths * DAYS_PER_MONTH);
+      const cycles = Math.floor(Math.max(0, daysBetween(factoryDate, today)) / span);
+      lastDate = addDays(factoryDate, cycles * span);
+    } else if (item.intervalMonths) {
+      timeKnown = false; // km-based estimate only
+    }
+    last = { date: lastDate, km: lastKm };
     assumed = true;
   }
 
   const leftKm = item.intervalKm ? item.intervalKm - (vehicle.km - last.km) : null;
-  const leftDays = item.intervalMonths
-    ? Math.round(item.intervalMonths * DAYS_PER_MONTH) - daysBetween(last.date, today)
-    : null;
+  const leftDays =
+    item.intervalMonths && timeKnown
+      ? Math.round(item.intervalMonths * DAYS_PER_MONTH) - daysBetween(last.date, today)
+      : null;
 
   const usedKm = leftKm != null ? 1 - leftKm / item.intervalKm : 0;
   const usedTime = leftDays != null ? 1 - leftDays / (item.intervalMonths * DAYS_PER_MONTH) : 0;
@@ -226,9 +235,32 @@ export function maintStatus(
   return { key, leftKm, leftDays, used: Math.max(0, Math.min(1, used)), last, assumed };
 }
 
-/** "2.400 km veya 1 ay kaldı" / "12.612 km geçti · 13 ay geçti" / "Son değişimi gir". */
+function addDays(iso: string, days: number): string {
+  const d = new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000);
+  return d.toISOString().slice(0, 10);
+}
+
+/** "Her 15.000 km veya 1 yılda bir" */
+export function everyText(item: Pick<MaintItemDef, 'intervalKm' | 'intervalMonths'>): string {
+  const km = item.intervalKm ? `${formatThousands(item.intervalKm)} km` : null;
+  const mo = item.intervalMonths
+    ? item.intervalMonths % 12 === 0
+      ? `${item.intervalMonths / 12} yılda`
+      : `${item.intervalMonths} ayda`
+    : null;
+  if (km && mo) return `Her ${km} veya ${mo} bir`;
+  if (km) return `Her ${km}'de bir`;
+  return `Her ${mo} bir`;
+}
+
+/** "2.400 km veya 1 ay kaldı" / "12.612 km geçti · 13 ay geçti"; estimates end with "· tahmini". */
 export function leftLine(s: MaintStatus): string {
-  if (s.key === 'unknown') return 'Son yapılma tarihini gir';
+  if (s.key === 'unknown') return 'Model yılını gir ya da son yapılmayı işaretle';
+  const line = leftCore(s);
+  return s.assumed ? `${line} · tahmini` : line;
+}
+
+function leftCore(s: MaintStatus): string {
   const parts: string[] = [];
   if (s.key === 'over') {
     if (s.leftKm != null && s.leftKm < 0) parts.push(`${formatThousands(-s.leftKm)} km geçti`);

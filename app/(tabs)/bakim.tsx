@@ -8,6 +8,7 @@ import {
   intervalText,
   itemName,
   leftLine,
+  everyText,
   STATUS_LABEL,
   type MaintStatusKey,
   type PlanRow,
@@ -26,7 +27,7 @@ const STATUS_TONE: Record<MaintStatusKey, Tone> = { over: 'error', soon: 'warn',
 const STATUS_COLOR: Record<MaintStatusKey, string> = { over: colors.error, soon: colors.warn, ok: colors.ok, unknown: colors.faint };
 const GROUPS: MaintStatusKey[] = ['over', 'soon', 'ok', 'unknown'];
 
-type Mode = { kind: 'detail'; id: string } | { kind: 'done'; id: string } | { kind: 'interval'; id: string } | null;
+type Mode = { kind: 'detail'; id: string } | { kind: 'done'; id: string; preset?: string[] } | { kind: 'interval'; id: string } | null;
 
 function addDaysISO(iso: string, days: number): string {
   const t = Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000;
@@ -45,13 +46,16 @@ function nextText(r: PlanRow): string {
 function lastText(r: PlanRow): string {
   const last = r.status.last;
   if (!last) return 'Bilinmiyor';
-  if (r.status.assumed) return 'Kayıt yok (yeni araç varsayıldı)';
+  if (r.status.assumed) return 'Kayıt yok · aralığa göre tahmin';
   return `${formatDateTR(last.date)} · ${formatThousands(last.km)} km`;
 }
 
 function rowCopy(r: PlanRow): string {
   return `${r.item.name}: ${STATUS_LABEL[r.status.key]} · ${leftLine(r.status)} · aralık ${intervalText(r.item)} · son ${lastText(r)}`;
 }
+
+/** Items usually done together at a periodic service (pre-checked in the quick entry). */
+const PERIODIC = ['yag', 'yagf', 'hava', 'polen'];
 
 /** Service records shown without Pro (newest first). */
 const FREE_HISTORY = 5;
@@ -75,6 +79,8 @@ export default function BakimScreen() {
   if (!vehicle) return <Screen><View /></Screen>;
 
   const current = mode ? byId[mode.id] : undefined;
+  const estimatedCount = rows.filter((r) => r.status.assumed).length;
+  const periodicId = byId.yag ? 'yag' : rows[0]?.item.id ?? 'yag';
   const shown = isPro ? records : records.slice(0, FREE_HISTORY);
   const lockedCount = records.length - shown.length;
 
@@ -106,6 +112,18 @@ export default function BakimScreen() {
         <SummaryTile n={counts.ok} label="İyi" color={colors.ok} />
       </View>
 
+      {estimatedCount >= 2 ? (
+        <Card style={styles.quick} onPress={() => setMode({ kind: 'done', id: periodicId, preset: PERIODIC.filter((id) => id !== periodicId && byId[id]) })}>
+          <View style={styles.flex}>
+            <Text style={styles.rowName}>Son periyodik bakımını gir</Text>
+            <Text style={styles.rowSub}>
+              {estimatedCount} kalem aralığa göre tahmin ediliyor. Son bakımın tarihini ve kilometresini girince gerçek hesaba döner.
+            </Text>
+          </View>
+          <Icon name="chevronRight" size={14} color={colors.faint} stroke={2.2} />
+        </Card>
+      ) : null}
+
       {GROUPS.map((g) => {
         const items = rows.filter((r) => r.status.key === g);
         if (items.length === 0) return null;
@@ -114,7 +132,7 @@ export default function BakimScreen() {
             <View style={styles.groupHead}>
               <View style={[styles.groupDot, { backgroundColor: STATUS_COLOR[g] }]} />
               <Text style={styles.groupName}>{STATUS_LABEL[g]}</Text>
-              {g === 'unknown' ? <Text style={styles.groupHint}>Son yapılma tarihini gir</Text> : null}
+              {g === 'unknown' ? <Text style={styles.groupHint}>Model yılını gir ya da işaretle</Text> : null}
             </View>
             <Card>
               {items.map((r, i) => (
@@ -125,8 +143,13 @@ export default function BakimScreen() {
                     <View style={styles.flex}>
                       <Text style={styles.rowName}>{r.item.name}</Text>
                       <Text style={[styles.rowSub, tabular]}>{leftLine(r.status)}</Text>
+                      <Text style={[styles.rowEvery, tabular]}>{everyText(r.item)}</Text>
                     </View>
-                    <Chip label={STATUS_LABEL[r.status.key]} t={STATUS_TONE[r.status.key]} style={{ alignSelf: 'center' }} />
+                    <Chip
+                      label={r.status.assumed ? 'Tahmini' : STATUS_LABEL[r.status.key]}
+                      t={r.status.assumed ? 'neutral' : STATUS_TONE[r.status.key]}
+                      style={{ alignSelf: 'center' }}
+                    />
                   </Copyable>
                 </View>
               ))}
@@ -254,6 +277,7 @@ export default function BakimScreen() {
             <DoneSheet
               row={current}
               rows={rows}
+              preset={mode.kind === 'done' ? mode.preset : undefined}
               vehicleKm={vehicle.km}
               onCancel={() => setMode({ kind: 'detail', id: current.item.id })}
               onSave={(rec) => {
@@ -383,12 +407,14 @@ function IntervalSheet({
 function DoneSheet({
   row,
   rows,
+  preset,
   vehicleKm,
   onCancel,
   onSave,
 }: {
   row: PlanRow;
   rows: PlanRow[];
+  preset?: string[];
   vehicleKm: number;
   onCancel: () => void;
   onSave: (r: { date: string; km: number; items: string[]; service: string; cost: number | null; note: string }) => void;
@@ -399,9 +425,10 @@ function DoneSheet({
   const [cost, setCost] = useState('');
   const [note, setNote] = useState('');
   const pair = row.item.id === 'yag' ? 'yagf' : row.item.id === 'yagf' ? 'yag' : null;
-  const [extra, setExtra] = useState<Record<string, boolean>>(() =>
-    pair && rows.some((r) => r.item.id === pair) ? { [pair]: true } : {}
-  );
+  const [extra, setExtra] = useState<Record<string, boolean>>(() => {
+    if (preset) return Object.fromEntries(preset.map((id) => [id, true]));
+    return pair && rows.some((r) => r.item.id === pair) ? { [pair]: true } : {};
+  });
   const others = rows.filter((r) => r.item.id !== row.item.id);
 
   const save = () => {
@@ -512,6 +539,8 @@ function FormRow({
 }
 
 const styles = StyleSheet.create({
+  quick: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, marginTop: 16, borderColor: 'rgba(59,130,246,0.35)' },
+  rowEvery: { color: colors.faint, fontFamily: fonts.body, fontSize: 11.5, marginTop: 2 },
   flex: { flex: 1, minWidth: 0 },
   between: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
   summary: { flexDirection: 'row', gap: 8, marginTop: 18 },

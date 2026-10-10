@@ -1,5 +1,6 @@
 import {
   durationText,
+  everyText,
   evaluatePlan,
   hiddenByBrand,
   intervalText,
@@ -53,8 +54,25 @@ describe('maintStatus', () => {
     expect(s.key).toBe('over');
     expect(leftLine(s)).toMatch(/ay geçti$/);
   });
-  it('unknown without a record once the factory assumption is past the interval', () => {
-    expect(maintStatus(yag, [], car, '2026-10-10').key).toBe('unknown');
+  it('estimates on-schedule service without a record', () => {
+    const s = maintStatus(yag, [], car, '2026-10-10');
+    expect(s.assumed).toBe(true);
+    expect(s.last?.km).toBe(45000);
+    expect(s.leftKm).toBe(11388);
+    expect(leftLine(s)).toMatch(/ kaldı · tahmini$/);
+  });
+  it('estimates time-only items from the model year, unknown without one', () => {
+    const hid = { id: 'hid', name: 'Fren hidroliği', intervalKm: 0, intervalMonths: 24, why: '' };
+    const s = maintStatus(hid, [], { km: 48612, year: 2021 }, '2026-10-10');
+    expect(s.assumed).toBe(true);
+    expect(s.leftDays).toBeGreaterThan(0);
+    expect(s.leftDays).toBeLessThanOrEqual(731);
+    expect(maintStatus(hid, [], { km: 48612, year: null }, '2026-10-10').key).toBe('unknown');
+  });
+  it('km-only estimate when the model year is unknown', () => {
+    const s = maintStatus(yag, [], { km: 48612, year: null }, '2026-10-10');
+    expect(s.leftKm).toBe(11388);
+    expect(s.leftDays).toBeNull();
   });
   it('assumes factory state for a new car with no record', () => {
     const s = maintStatus(yag, [], { km: 4000, year: 2026 }, '2026-06-01');
@@ -78,6 +96,9 @@ describe('plan helpers', () => {
   });
   it('formats intervals and durations', () => {
     expect(intervalText({ intervalKm: 15000, intervalMonths: 12 })).toBe('15.000 km · 1 yıl');
+    expect(everyText({ intervalKm: 15000, intervalMonths: 12 })).toBe('Her 15.000 km veya 1 yılda bir');
+    expect(everyText({ intervalKm: 40000, intervalMonths: 0 })).toBe("Her 40.000 km'de bir");
+    expect(everyText({ intervalKm: 0, intervalMonths: 18 })).toBe('Her 18 ayda bir');
     expect(intervalText({ intervalKm: 0, intervalMonths: 18 })).toBe('18 ay');
     expect(durationText(10)).toBe('10 gün');
     expect(durationText(400)).toBe('13 ay');

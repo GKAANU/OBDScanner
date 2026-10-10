@@ -1,5 +1,16 @@
 import type { Transport } from './transport';
-import { atstCommand, initProbeError, OBDError, recoveryAction, takeResponse } from './protocol';
+import {
+  atstCommand,
+  classifyConnectError,
+  initProbeError,
+  OBDError,
+  probeSucceeded,
+  recoveryAction,
+  takeResponse,
+  type ConnectErrorKind,
+  type ConnectStep,
+} from './protocol';
+import { NOOP_LOGGER, type DiagLogger } from './diag-log';
 import {
   detectOBDError,
   parseBatteryVoltage,
@@ -37,7 +48,47 @@ export type SendOptions = {
   timeoutMs?: number;
   /** Apply STOPPED / BUS INIT recovery (default true). The Terminal disables it. */
   recover?: boolean;
+  /** Log TX/RX even after init (the Terminal sets this). */
+  trace?: boolean;
+  /**
+   * Internal (init): after an earlier timeout, skip the grace + ATI resync
+   * and just drop buffered bytes. Keeps a silent adapter from cascading
+   * extra waits during the reset steps.
+   */
+  resync?: boolean;
+  /** Internal (init): use timeoutMs as-is, without the slow-ECU floor (AT commands). */
+  exactTimeout?: boolean;
 };
+
+/** Result of init(): values read on the way so the caller need not re-query. */
+export type InitResult = {
+  adapterVersion: string | null;
+  battery: number | null;
+};
+
+export type OBDClientOptions = {
+  /** Connection log sink ("Bağlantı günlüğü"). */
+  log?: DiagLogger;
+};
+
+export type ConnectHooks = {
+  /** Called right before the single automatic TCP retry is scheduled. */
+  onRetry?: () => void;
+};
+
+/** TCP failures worth one automatic retry (Wi-Fi may still be associating). */
+const RETRYABLE_TCP: ReadonlySet<ConnectErrorKind> = new Set(['no_route', 'net_unreachable', 'timeout']);
+/** Delay before the automatic TCP retry. */
+export const TCP_RETRY_DELAY_MS = 2500;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Normalize anything a transport's open() threw into a tcp-step OBDError. */
+function toTcpError(e: unknown): OBDError {
+  if (e instanceof OBDError) return e.step ? e : e.withStep('tcp');
+  const raw = e instanceof Error ? e.message : String(e);
+  return new OBDError('CONNECT_FAILED', raw, { step: 'tcp', raw });
+}
 
 export type FreezeFrameValue = { def: PIDDef; value: number | string };
 
@@ -91,6 +142,24 @@ const RESYNC_QUIET_MS = 100;
 /** Harmless command used to flush the adapter when it stays silent. */
 const RESYNC_PROBE = 'ATI';
 
+// init() timings (ms). A silent adapter fails the reset step after
+// 300 + 1000 + 5000 + 3000 + 300 + 3000 = 12.6 s.
+const FLUSH_SETTLE_MS = 300;
+const FLUSH_WAIT_MS = 1000;
+const ATZ_TIMEOUT_MS = 5000;
+const ATWS_TIMEOUT_MS = 3000;
+const RESET_QUIET_MS = 300;
+const ATE0_TIMEOUT_MS = 3000;
+const SETUP_TIMEOUT_MS = 3000;
+const ADAPTER_INFO_TIMEOUT_MS = 2000;
+const PROBE_TIMEOUT_MS = 15000;
+
+/** True for a Mode 04 (clear DTCs) request, however it is spaced. */
+function isMode04(command: string): boolean {
+  const c = command.replace(/\s+/g, '').toUpperCase();
+  return c === '04' || c === '4';
+}
+
 /**
  * Single-flight client for ELM327-class OBD-II adapters.
  *
@@ -125,6 +194,17 @@ export class OBDClient {
   private defaultTimeoutMs = DEFAULT_OBD_CONFIG.timeoutMs ?? 5000;
   private slowEcu = false;
   private disconnectListener: ((err: Error) => void) | null = null;
+  private readonly log: DiagLogger;
+  /**
+   * Log every TX/RX. True while connecting/initializing; after init only
+   * errors, timeouts and recovery actions are logged so live polling does
+   * not evict the connect lines from the ring buffer.
+   */
+  private verbose = true;
+
+  constructor(options: OBDClientOptions = {}) {
+    this.log = options.log ?? NOOP_LOGGER;
+  }
 
   /**
    * Called when the link drops without disconnect() being called
@@ -134,22 +214,47 @@ export class OBDClient {
     this.disconnectListener = listener;
   }
 
-  async connect(transport: Transport, config: Pick<OBDConfig, 'timeoutMs' | 'slowEcu'> = {}): Promise<void> {
+  /**
+   * Open the transport. A TCP failure of kind no_route / net_unreachable /
+   * timeout is retried exactly once after 2.5 s (refused is not: the host
+   * answered, the port is wrong). disconnect() aborts, also during the wait.
+   */
+  async connect(
+    transport: Transport,
+    config: Pick<OBDConfig, 'timeoutMs' | 'slowEcu'> = {},
+    hooks: ConnectHooks = {}
+  ): Promise<void> {
     if (this.transport || this.opening) throw new Error('Already connected');
     this.slowEcu = !!config.slowEcu;
     const base = config.timeoutMs ?? DEFAULT_OBD_CONFIG.timeoutMs ?? 5000;
     this.defaultTimeoutMs = this.slowEcu ? Math.max(base, SLOW_ECU_TIMEOUT_MS) : base;
     this.buffer = '';
     this.stale = false;
+    this.verbose = true;
 
     this.opening = transport;
-    try {
-      await this.openTransport(transport);
-    } catch (e) {
-      if (this.opening === transport) this.opening = null;
-      throw e;
+    const aborted = () => this.opening !== transport;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.openTransport(transport);
+        break;
+      } catch (e) {
+        if (aborted()) throw new OBDError('CONNECTION_CLOSED', 'Disconnected while connecting');
+        const err = toTcpError(e);
+        const kind = classifyConnectError(err.raw ?? err.message);
+        this.log.log(`tcp attempt ${attempt} failed: kind=${kind} raw=${err.raw ?? err.message}`);
+        if (attempt === 1 && RETRYABLE_TCP.has(kind)) {
+          this.log.log(`tcp retry in ${TCP_RETRY_DELAY_MS}ms`);
+          hooks.onRetry?.();
+          await sleep(TCP_RETRY_DELAY_MS);
+          if (aborted()) throw new OBDError('CONNECTION_CLOSED', 'Disconnected while connecting');
+          continue;
+        }
+        this.opening = null;
+        throw err;
+      }
     }
-    if (this.opening !== transport) {
+    if (aborted()) {
       // disconnect() was called while the link was opening.
       transport.close();
       throw new OBDError('CONNECTION_CLOSED', 'Disconnected while connecting');
@@ -188,9 +293,11 @@ export class OBDClient {
         this.pending = null;
         clearTimeout(p.timer);
         p.resolve(response);
+      } else {
+        // A prompt with nothing in flight is discarded (late replies are
+        // normally absorbed by resync()).
+        this.log.log(`drop unsolicited reply: ${response}`);
       }
-      // A prompt with nothing in flight is discarded (late replies are
-      // normally absorbed by resync()).
     }
   }
 
@@ -210,49 +317,81 @@ export class OBDClient {
   send(command: string, options: SendOptions | number = {}): Promise<string> {
     const opts: SendOptions = typeof options === 'number' ? { timeoutMs: options } : options;
     const requested = opts.timeoutMs ?? this.defaultTimeoutMs;
-    const timeoutMs = this.slowEcu ? Math.max(requested, this.defaultTimeoutMs) : requested;
-    const run = this.queue.then(() => this.sendWithRecovery(command, timeoutMs, opts.recover !== false));
-    this.queue = run.catch(() => undefined);
+    const timeoutMs =
+      this.slowEcu && !opts.exactTimeout ? Math.max(requested, this.defaultTimeoutMs) : requested;
+    const run = this.queue.then(() => this.sendWithRecovery(command, timeoutMs, opts));
+    let next: Promise<unknown> = run.catch(() => undefined);
+    if (isMode04(command)) {
+      // A bare CR makes an ELM327 repeat its last command, and init/scan
+      // send one. Make sure that last command is never Mode 04.
+      next = next.then(() => this.sendOnce('ATI', 2000, { resync: true }).catch(() => undefined));
+    }
+    this.queue = next;
     return run;
   }
 
-  private async sendWithRecovery(command: string, timeoutMs: number, recover: boolean): Promise<string> {
-    const raw = await this.sendOnce(command, timeoutMs);
-    if (!recover) return raw;
+  private async sendWithRecovery(command: string, timeoutMs: number, opts: SendOptions): Promise<string> {
+    const raw = await this.sendOnce(command, timeoutMs, opts);
+    if (opts.recover === false) return raw;
     switch (recoveryAction(raw, 0)) {
       case 'retry':
-        return this.sendOnce(command, timeoutMs);
+        this.log.log(`recovery: STOPPED -> retry ${command}`);
+        return this.sendOnce(command, timeoutMs, opts);
       case 'reprotocol':
-        await this.sendOnce('ATSP0', timeoutMs);
+        this.log.log(`recovery: BUS INIT ERROR -> ATSP0, retry ${command}`);
+        await this.sendOnce('ATSP0', timeoutMs, opts);
         // Auto-detect runs again on the next OBD request: allow extra time.
-        return this.sendOnce(command, Math.max(timeoutMs, 8000));
+        return this.sendOnce(command, Math.max(timeoutMs, 8000), opts);
       default:
         return raw;
     }
   }
 
-  private async sendOnce(command: string, timeoutMs: number): Promise<string> {
-    if (this.stale) await this.resync(timeoutMs);
+  private async sendOnce(command: string, timeoutMs: number, opts: SendOptions = {}): Promise<string> {
+    if (this.stale) {
+      if (opts.resync === false) {
+        this.stale = false;
+      } else {
+        await this.resync(timeoutMs);
+      }
+    }
     const transport = this.transport;
     if (!transport) throw new OBDError('NOT_CONNECTED', 'Not connected');
     // The adapter is silent between a prompt and the next command, so any
     // bytes still buffered belong to an earlier exchange: drop them.
-    this.buffer = '';
+    this.dropBuffer();
+    const trace = this.verbose || !!opts.trace;
+    if (trace) this.log.log(`TX ${command}\r`);
+    const sentAt = Date.now();
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.pending?.timer === timer) {
           this.pending = null;
           this.stale = true;
+          this.log.log(`timeout ${timeoutMs}ms waiting for ${command}${trace ? '' : ' (quiet mode)'}`);
           reject(new OBDError('TIMEOUT', `Timeout waiting for response to: ${command}`));
         }
       }, timeoutMs);
-      this.pending = { resolve, reject, timer };
+      this.pending = {
+        resolve: (data) => {
+          if (trace) this.log.log(`RX ${Date.now() - sentAt}ms ${data}`);
+          resolve(data);
+        },
+        reject,
+        timer,
+      };
       try {
         transport.write(command + '\r');
       } catch (e) {
         this.failPending(e instanceof Error ? e : new Error(String(e)));
       }
     });
+  }
+
+  /** Discard buffered bytes that belong to no command (logged). */
+  private dropBuffer(): void {
+    if (this.buffer.length > 0) this.log.log(`drop ${this.buffer.length} stray bytes: ${this.buffer}`);
+    this.buffer = '';
   }
 
   /**
@@ -291,35 +430,153 @@ export class OBDClient {
     if (got === null) {
       const transport = this.transport;
       if (!transport) throw new OBDError('NOT_CONNECTED', 'Not connected');
-      this.buffer = '';
+      this.dropBuffer();
+      this.log.log(`resync: silent for ${grace}ms, TX ${RESYNC_PROBE}\r`);
       transport.write(RESYNC_PROBE + '\r');
       got = await this.waitForPrompt(grace);
-      if (got === null) return;
+      if (got === null) {
+        this.log.log('resync: no answer, still out of sync');
+        return;
+      }
     }
-    while ((await this.waitForPrompt(RESYNC_QUIET_MS)) !== null) {
-      // discard
+    this.log.log(`resync: discarded late reply: ${got}`);
+    let extra: string | null;
+    while ((extra = await this.waitForPrompt(RESYNC_QUIET_MS)) !== null) {
+      this.log.log(`resync: discarded: ${extra}`);
     }
     this.stale = false;
-    this.buffer = '';
+    this.dropBuffer();
   }
 
   /**
-   * ELM327 init sequence. Throws an OBDError if the vehicle does not answer
-   * the 0100 probe (ignition off, wrong protocol, no ECU).
+   * Wait up to `firstMs` for a prompt, then keep draining prompts until the
+   * line has been quiet for `quietMs`. Everything received is logged and
+   * discarded (banners, echoes of an interrupted command).
    */
-  async init(): Promise<void> {
-    await this.send('ATZ', 3000);
-    await this.send('ATE0');
-    await this.send('ATL0');
-    await this.send('ATS0');
-    await this.send('ATH0');
-    if (this.slowEcu) await this.setAdapterTimeout(600);
-    await this.send('ATSP0');
-    const probe = await this.send('0100', 8000);
-    const err = initProbeError(probe);
-    if (err) {
-      throw new OBDError(err as 'UNABLE_TO_CONNECT' | 'BUS_INIT_ERROR' | 'CAN_ERROR' | 'NO_DATA', `0100 -> ${probe}`);
+  private async drain(firstMs: number, quietMs: number, what: string): Promise<void> {
+    let got = await this.waitForPrompt(firstMs);
+    while (got !== null) {
+      this.log.log(`${what}: discarded reply: ${got}`);
+      got = await this.waitForPrompt(quietMs);
     }
+    this.dropBuffer();
+  }
+
+  /**
+   * ELM327 init sequence:
+   *
+   *   reset:        300 ms settle, bare CR flush (wait <= 1 s for `>`),
+   *                 ATZ (5 s; on timeout ATWS 3 s), 300 ms quiet + drain,
+   *                 ATE0 (3 s, fatal)
+   *   setup:        ATL0, ATS0, ATH0, [ATST92 in slow ECU mode]
+   *   adapter-info: ATI, ATRV (2 s each, non-fatal)
+   *   probe:        ATSP0, 0100 (15 s). Only a reply with the 4100 marker
+   *                 counts; anything else is a vehicle/probe failure.
+   *
+   * The reset steps never run the timeout resync, so a silent adapter
+   * fails within ~12.6 s after the TCP open. AT setters answering `?`
+   * are not fatal. Throws an OBDError tagged with the failing step.
+   */
+  async init(): Promise<InitResult> {
+    this.verbose = true;
+    let step: ConnectStep = 'reset';
+    const enter = (s: ConnectStep) => {
+      step = s;
+      this.log.log(`step ${s}`);
+    };
+    const quick = (cmd: string, timeoutMs: number, resync = true) =>
+      this.send(cmd, { timeoutMs, exactTimeout: true, recover: false, resync });
+    /** Non-fatal command: resolves null on timeout. */
+    const optional = async (cmd: string, timeoutMs: number, resync = true): Promise<string | null> => {
+      try {
+        return await quick(cmd, timeoutMs, resync);
+      } catch (e) {
+        if (e instanceof OBDError && e.code === 'TIMEOUT') return null;
+        throw e;
+      }
+    };
+
+    const result: InitResult = { adapterVersion: null, battery: null };
+    try {
+      enter('reset');
+      await this.flushLine();
+      const atz = await optional('ATZ', ATZ_TIMEOUT_MS, false);
+      if (atz === null) {
+        this.log.log('ATZ silent: trying ATWS (warm start)');
+        await optional('ATWS', ATWS_TIMEOUT_MS, false);
+      }
+      await this.enqueue(() => this.drain(RESET_QUIET_MS, RESYNC_QUIET_MS, 'after reset'));
+      await quick('ATE0', ATE0_TIMEOUT_MS, false);
+
+      enter('setup');
+      await quick('ATL0', SETUP_TIMEOUT_MS);
+      await quick('ATS0', SETUP_TIMEOUT_MS);
+      await quick('ATH0', SETUP_TIMEOUT_MS);
+      if (this.slowEcu) await quick(atstCommand(600), SETUP_TIMEOUT_MS);
+
+      enter('adapter-info');
+      const ati = await optional('ATI', ADAPTER_INFO_TIMEOUT_MS);
+      result.adapterVersion = ati && !detectOBDError(ati) ? ati.trim() || null : null;
+      const atrv = await optional('ATRV', ADAPTER_INFO_TIMEOUT_MS);
+      result.battery = atrv ? parseBatteryVoltage(atrv) : null;
+
+      enter('probe');
+      await quick('ATSP0', SETUP_TIMEOUT_MS);
+      // Recovery stays on: STOPPED is retried, BUS INIT ERROR re-runs ATSP0.
+      const probe = await this.send('0100', { timeoutMs: PROBE_TIMEOUT_MS, exactTimeout: true });
+      if (!probeSucceeded(probe)) {
+        const code = (initProbeError(probe) ?? 'PROBE_FAILED') as
+          | 'UNABLE_TO_CONNECT'
+          | 'BUS_INIT_ERROR'
+          | 'CAN_ERROR'
+          | 'NO_DATA'
+          | 'PROBE_FAILED';
+        throw new OBDError(code, `0100 -> ${probe}`, { step: 'probe', raw: probe });
+      }
+    } catch (e) {
+      const err =
+        e instanceof OBDError
+          ? e.step
+            ? e
+            : e.withStep(step)
+          : new OBDError('CONNECTION_CLOSED', e instanceof Error ? e.message : String(e), { step });
+      this.log.log(`init failed at ${err.step}: ${err.code} ${err.raw ?? err.message}`);
+      throw err;
+    }
+    this.log.log('init ok; logging only errors, timeouts and recovery from now on');
+    this.verbose = false;
+    return result;
+  }
+
+  /** Run `fn` in the command queue (no other command overlaps it). */
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(fn);
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * Reset step 1: wait for the link to settle, send a bare CR, wait up to
+   * 1 s for a prompt and discard whatever arrived (banners some Wi-Fi
+   * clones send on connect, a half-typed command from an earlier session).
+   */
+  private flushLine(): Promise<void> {
+    return this.enqueue(async () => {
+      await sleep(FLUSH_SETTLE_MS);
+      const transport = this.transport;
+      if (!transport) throw new OBDError('NOT_CONNECTED', 'Not connected');
+      this.dropBuffer();
+      this.log.log('TX \\r (flush)');
+      transport.write('\r');
+      const got = await this.waitForPrompt(FLUSH_WAIT_MS);
+      if (got === null) {
+        this.log.log(`flush: no prompt within ${FLUSH_WAIT_MS}ms (ignored)`);
+        this.dropBuffer();
+        return;
+      }
+      this.log.log(`flush: discarded reply: ${got}`);
+      await this.drain(RESYNC_QUIET_MS, RESYNC_QUIET_MS, 'flush');
+    });
   }
 
   /** Set the adapter's ECU response timeout (ATST) for slow ECUs. */

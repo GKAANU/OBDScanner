@@ -10,25 +10,51 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OBDClient, type OBDConfig, DEFAULT_OBD_CONFIG } from './client';
 import { DEFAULT_LIVE_PIDS } from './pid-registry';
-import { userMessage } from './protocol';
-import { TcpTransport } from './transport-tcp';
+import { errorDetail as describeError, userMessage } from './protocol';
+import { TcpTransport, TCP_CONNECT_TIMEOUTS, TCP_SCAN_TIMEOUTS } from './transport-tcp';
+import { hostPort, type Endpoint } from './presets';
+import {
+  probeAdapter,
+  scanCandidates,
+  scanFailureDetail,
+  scanFailureMessage,
+  scanForAdapter,
+  type ScanResult,
+} from './scan';
+import { diagLog } from './diag-log';
 import { DemoTransport } from './transport-demo';
 
-export type ConnectionState = 'idle' | 'connecting' | 'initializing' | 'ready' | 'error';
+import { canStartConnect, resolveConnectConfig, type ConnectionState } from './connect-config';
+
+export type { ConnectionState };
 
 type Ctx = {
   client: OBDClient;
   config: OBDConfig;
   setConfig: (c: OBDConfig) => void;
+  /** True once saved settings finished loading (or failed to); connect is ignored before. */
+  hydrated: boolean;
   state: ConnectionState;
   errorMessage: string | null;
+  /** Technical one-liner for the last error: `<step> · <code>/<kind> · <raw>`. */
+  errorDetail: string | null;
+  /** Progress note while connecting (e.g. "Tekrar deneniyor…"), else null. */
+  statusText: string | null;
   protocolName: string | null;
   battery: number | null;
   adapterVersion: string | null;
   selectedLivePids: string[];
   setSelectedLivePids: (ids: string[]) => void;
-  /** Connect using the saved config; `overrides` (e.g. { demo: true }) are saved first. */
+  /**
+   * Connect using the saved config plus `overrides` (saved first). Demo mode
+   * only with an explicit `{ demo: true }`.
+   */
   connect: (overrides?: Partial<OBDConfig>) => Promise<void>;
+  /**
+   * Otomatik bul: probe `typed` (unless it is a preset) and the presets one
+   * by one; connect to the first adapter that answers. disconnect() cancels.
+   */
+  autoDetect: (typed: Endpoint) => Promise<void>;
   disconnect: () => void;
   refreshBattery: () => Promise<void>;
 };
@@ -41,13 +67,19 @@ const STORAGE_KEYS = {
 } as const;
 
 export function OBDProvider({ children }: { children: React.ReactNode }) {
-  const clientRef = useRef<OBDClient>(new OBDClient());
+  const clientRef = useRef<OBDClient>(new OBDClient({ log: diagLog }));
   const connectingRef = useRef(false);
   /** Bumped by every connect/disconnect; a connect attempt whose session is stale stops quietly. */
   const sessionRef = useRef(0);
+  /** Aborts a running Otomatik bul scan. */
+  const scanAbortRef = useRef<AbortController | null>(null);
+  const hydratedRef = useRef(false);
+  const [hydrated, setHydrated] = useState(false);
   const [config, setConfigState] = useState<OBDConfig>(DEFAULT_OBD_CONFIG);
   const [state, setState] = useState<ConnectionState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  const [statusText, setStatusText] = useState<string | null>(null);
   const [protocolName, setProtocolName] = useState<string | null>(null);
   const [battery, setBattery] = useState<number | null>(null);
   const [adapterVersion, setAdapterVersion] = useState<string | null>(null);
@@ -79,6 +111,9 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         // ignore — fall back to defaults
+      } finally {
+        hydratedRef.current = true;
+        setHydrated(true);
       }
     })();
   }, []);
@@ -114,50 +149,68 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const c = clientRef.current;
     c.setDisconnectListener((err) => {
+      diagLog.log(`link lost: ${describeError(err)}`);
       clearSession();
       setErrorMessage(userMessage(err));
+      setErrorDetail(describeError(err));
       setState('error');
     });
     return () => c.setDisconnectListener(null);
   }, [clearSession]);
 
-  const connect = useCallback(async (overrides?: Partial<OBDConfig>) => {
+  const startConnect = useCallback(async (overrides: Partial<OBDConfig> | undefined, status: string | null) => {
     const c = clientRef.current;
-    if (c.isConnected() || connectingRef.current) return;
+    if (!canStartConnect({ hydrated: hydratedRef.current, connected: c.isConnected(), connecting: connectingRef.current })) {
+      return;
+    }
     connectingRef.current = true;
     const session = ++sessionRef.current;
     const stale = () => sessionRef.current !== session;
-    const cfg: OBDConfig = overrides ? { ...config, ...overrides } : config;
-    if (overrides) setConfig(cfg);
+    const cfg = resolveConnectConfig(config, overrides);
+    if (overrides || cfg.demo !== config.demo) setConfig(cfg);
     setErrorMessage(null);
+    setErrorDetail(null);
+    setStatusText(status);
     setState('connecting');
+    diagLog.startAttempt(
+      `connect start ${cfg.demo ? 'demo' : `${cfg.host}:${cfg.port}`} slowEcu=${!!cfg.slowEcu} ` +
+        `timeoutMs=${cfg.timeoutMs ?? '-'} tcp=${TCP_CONNECT_TIMEOUTS.connectTimeoutMs}/${TCP_CONNECT_TIMEOUTS.backstopMs}ms`
+    );
     try {
       // Demo mode never opens a socket: it talks to the in-memory simulator.
-      const transport = cfg.demo ? new DemoTransport() : new TcpTransport(cfg.host, cfg.port);
-      await c.connect(transport, cfg);
+      const transport = cfg.demo
+        ? new DemoTransport()
+        : new TcpTransport(cfg.host, cfg.port, { ...TCP_CONNECT_TIMEOUTS, log: diagLog });
+      await c.connect(transport, cfg, {
+        onRetry: () => {
+          if (!stale()) setStatusText('Tekrar deneniyor…');
+        },
+      });
       if (stale()) return;
+      setStatusText(null);
       setState('initializing');
-      await c.init();
+      const info = await c.init();
       if (stale()) return;
-      // Capture protocol + adapter version + battery for the status bar.
+      // ATI / ATRV were read during init; only the protocol name is left.
+      setAdapterVersion(info.adapterVersion);
+      if (info.battery != null) setBattery(info.battery);
       try {
         const name = await c.readProtocolName();
         if (!stale()) setProtocolName(name);
       } catch {}
-      try {
-        const ver = await c.readAdapterVersion();
-        if (!stale()) setAdapterVersion(ver);
-      } catch {}
-      try {
-        const v = await c.readBatteryVoltage();
-        if (v != null && !stale()) setBattery(v);
-      } catch {}
       if (stale()) return;
+      diagLog.log('state ready');
       setState('ready');
     } catch (e) {
       // The user pressed Kapat (or switched mode) mid-connect: not an error.
-      if (stale()) return;
+      if (stale()) {
+        diagLog.log('connect cancelled');
+        return;
+      }
+      diagLog.log(`state error: ${describeError(e)}`);
+      setStatusText(null);
       setErrorMessage(userMessage(e));
+      setErrorDetail(describeError(e));
       setState('error');
       clearSession();
       try {
@@ -168,11 +221,71 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     }
   }, [config, setConfig, clearSession]);
 
+  const connect = useCallback(
+    (overrides?: Partial<OBDConfig>) => startConnect(overrides, null),
+    [startConnect]
+  );
+
+  const autoDetect = useCallback(
+    async (typed: Endpoint) => {
+      const c = clientRef.current;
+      if (!canStartConnect({ hydrated: hydratedRef.current, connected: c.isConnected(), connecting: connectingRef.current })) {
+        return;
+      }
+      connectingRef.current = true;
+      const session = ++sessionRef.current;
+      const stale = () => sessionRef.current !== session;
+      const ac = new AbortController();
+      scanAbortRef.current = ac;
+      setErrorMessage(null);
+      setErrorDetail(null);
+      setStatusText(null);
+      setState('connecting');
+      diagLog.startAttempt(`auto-detect start typed=${hostPort(typed)}`);
+      let result: ScanResult;
+      try {
+        result = await scanForAdapter(
+          scanCandidates(typed),
+          // Sequential: scanForAdapter awaits each probe before the next.
+          (ep, signal) =>
+            probeAdapter(new TcpTransport(ep.host, ep.port, { ...TCP_SCAN_TIMEOUTS, log: diagLog }), signal),
+          {
+            signal: ac.signal,
+            log: diagLog,
+            onProgress: (ep, i, n) => {
+              if (!stale()) setStatusText(`Aranıyor: ${hostPort(ep)} (${i}/${n})`);
+            },
+          }
+        );
+      } finally {
+        if (scanAbortRef.current === ac) scanAbortRef.current = null;
+      }
+      if (stale()) return; // cancelled via Kapat: disconnect() already reset the state
+      connectingRef.current = false;
+      if (result.found) {
+        const { host, port } = result.found;
+        await startConnect({ host, port, demo: false }, `Adaptör bulundu: ${hostPort(result.found)}. Bağlanılıyor…`);
+        return;
+      }
+      diagLog.log(`state error: ${scanFailureDetail(result)}`);
+      setStatusText(null);
+      setErrorMessage(scanFailureMessage(result));
+      setErrorDetail(scanFailureDetail(result));
+      setState('error');
+    },
+    [startConnect]
+  );
+
   const disconnect = useCallback(() => {
+    diagLog.log('user disconnect (Kapat)');
+    scanAbortRef.current?.abort();
+    scanAbortRef.current = null;
     sessionRef.current++;
     connectingRef.current = false;
     clientRef.current.disconnect();
     setErrorMessage(null);
+    setErrorDetail(null);
+    setStatusText(null);
     setState('idle');
     clearSession();
   }, [clearSession]);
@@ -200,28 +313,36 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       client: clientRef.current,
       config,
       setConfig,
+      hydrated,
       state,
       errorMessage,
+      errorDetail,
+      statusText,
       protocolName,
       battery,
       adapterVersion,
       selectedLivePids,
       setSelectedLivePids,
       connect,
+      autoDetect,
       disconnect,
       refreshBattery,
     }),
     [
       config,
       setConfig,
+      hydrated,
       state,
       errorMessage,
+      errorDetail,
+      statusText,
       protocolName,
       battery,
       adapterVersion,
       selectedLivePids,
       setSelectedLivePids,
       connect,
+      autoDetect,
       disconnect,
       refreshBattery,
     ]

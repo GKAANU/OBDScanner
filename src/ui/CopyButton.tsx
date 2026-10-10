@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { copyText } from './clipboard';
 import { colors, fonts, fontSize, radius, spacing } from './theme';
 
 type Props = {
-  text: string;
+  /** Text to copy, or a function that builds it on press. */
+  text: string | (() => Promise<string>);
   label?: string;
   variant?: 'primary' | 'ghost';
   compact?: boolean;
@@ -14,8 +15,9 @@ export function CopyButton({ text, label = 'Kopyala', variant = 'ghost', compact
   const [copied, flash] = useCopiedFlash(1500);
 
   const onPress = useCallback(async () => {
-    if (!text) return;
-    if (await copyText(text)) flash();
+    const value = typeof text === 'function' ? await text() : text;
+    if (!value) return;
+    if (await copyText(value)) flash();
   }, [text, flash]);
 
   return (
@@ -47,7 +49,7 @@ export function CopyableValue({
 }: {
   text: string;
   children: React.ReactNode;
-  style?: any;
+  style?: StyleProp<ViewStyle>;
 }) {
   const [copied, flash] = useCopiedFlash(1200);
   const onLongPress = useCallback(async () => {
@@ -93,12 +95,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs + 2,
   },
   primary: {
-    backgroundColor: colors.accent,
+    backgroundColor: colors.blue,
   },
   ghost: {
-    backgroundColor: colors.cardElevated,
+    backgroundColor: colors.elevated,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.line,
   },
   pressed: {
     opacity: 0.7,
@@ -112,7 +114,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   labelGhost: {
-    color: colors.body,
+    color: colors.text,
   },
   copiedHint: {
     color: colors.ok,

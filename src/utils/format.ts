@@ -114,3 +114,61 @@ export function formatFullReport(r: FullReport): string {
 
   return lines.join('\n').trimEnd();
 }
+
+/* ---------- Turkish number / date formatting (pure, no Intl) ---------- */
+
+/** 48612 -> "48.612" (Turkish thousands separator). */
+export function formatThousands(n: number): string {
+  const sign = n < 0 ? '-' : '';
+  const s = Math.round(Math.abs(n)).toString();
+  return sign + s.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/** "₺7.450" from 7450; null -> "₺—". */
+export function formatLira(n: number | null | undefined): string {
+  return n == null ? '₺—' : `₺${formatThousands(n)}`;
+}
+
+/** ISO "2026-10-10" -> "10.10.2026". */
+export function formatDateTR(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : iso;
+}
+
+/** "10.10.2026" (or "10/10/2026", "1.2.2026") -> ISO "2026-10-10"; null when invalid. */
+export function parseDateTR(s: string): string | null {
+  const m = /^\s*(\d{1,2})[./-](\d{1,2})[./-](\d{4})\s*$/.exec(s);
+  if (!m) return null;
+  const d = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const y = parseInt(m[3], 10);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1950 || y > 2100) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCMonth() !== mo - 1) return null; // 31.02 etc.
+  return toISODate(dt);
+}
+
+/** Date -> "YYYY-MM-DD" using its UTC parts. */
+export function toISODate(d: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+/** Local "today" as ISO date. */
+export function todayISO(now: Date = new Date()): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** Whole days from ISO date `a` to ISO date `b` (b - a). */
+export function daysBetween(a: string, b: string): number {
+  const pa = Date.parse(`${a}T00:00:00Z`);
+  const pb = Date.parse(`${b}T00:00:00Z`);
+  return Math.round((pb - pa) / 86_400_000);
+}
+
+/** Digits only -> integer (e.g. "48.612 km" -> 48612); null if none. */
+export function parseKm(s: string): number | null {
+  const d = s.replace(/\D/g, '');
+  return d ? parseInt(d, 10) : null;
+}

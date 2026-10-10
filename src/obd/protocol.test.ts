@@ -1,5 +1,8 @@
 import {
   atstCommand,
+  classifyConnectError,
+  errorDetail,
+  LOCAL_NETWORK_HINT,
   initProbeError,
   OBDError,
   recoveryAction,
@@ -75,8 +78,10 @@ describe('userMessage', () => {
     expect(userMessage(new OBDError('UNABLE_TO_CONNECT', 'x'))).toMatch(/Kontağı açıp/);
     expect(userMessage(new OBDError('CONNECTION_CLOSED', 'x'))).toMatch(/bağlantı koptu/);
   });
-  it('maps native socket errors', () => {
-    expect(userMessage(new Error('connect ECONNREFUSED 192.168.0.10:35000'))).toMatch(/bağlanılamadı/);
+  it('maps errno-style native socket errors by kind', () => {
+    // Was the generic "bağlanılamadı" text; refused now has its own copy.
+    expect(userMessage(new Error('connect ECONNREFUSED 192.168.0.10:35000'))).toMatch(/reddetti/);
+    expect(userMessage(new Error('connect EHOSTUNREACH'))).toMatch(/ulaşılamıyor/);
   });
   it('never leaks raw English messages', () => {
     expect(userMessage(new Error('something odd'))).toBe('Beklenmeyen hata. Bağlantıyı kapatıp tekrar dene.');
@@ -110,5 +115,74 @@ describe('terminalPolicy', () => {
 
   it('lets unknown text through for the adapter to reject', () => {
     expect(terminalPolicy('HELLO')).toBe('allow');
+  });
+});
+
+const tcp = (raw: string) => new OBDError('CONNECT_FAILED', raw, { step: 'tcp', raw });
+
+describe('classifyConnectError', () => {
+  it('recognises iOS localizedDescription strings', () => {
+    expect(classifyConnectError('Connection refused')).toBe('refused');
+    expect(classifyConnectError('No route to host')).toBe('no_route');
+    expect(classifyConnectError('Network is unreachable')).toBe('net_unreachable');
+    expect(classifyConnectError('Operation timed out')).toBe('timeout');
+    expect(classifyConnectError('Attempt to connect to host timed out')).toBe('timeout');
+  });
+  it('recognises errno names, case-insensitively', () => {
+    expect(classifyConnectError('connect econnrefused')).toBe('refused');
+    expect(classifyConnectError('EHOSTUNREACH')).toBe('no_route');
+    expect(classifyConnectError('ENETUNREACH')).toBe('net_unreachable');
+    expect(classifyConnectError('ETIMEDOUT')).toBe('timeout');
+  });
+  it('recognises our own JS backstop timer', () => {
+    expect(classifyConnectError('Timed out connecting to 192.168.0.10:35000 (JS timer)')).toBe('timeout');
+  });
+  it('falls back to other', () => {
+    expect(classifyConnectError('Socket is not connected')).toBe('other');
+    expect(classifyConnectError('')).toBe('other');
+  });
+});
+
+describe('connect error messages and detail', () => {
+  it('refused: port copy, raw kept', () => {
+    const e = tcp('Connection refused');
+    expect(userMessage(e)).toBe(
+      "Adaptör bağlantıyı reddetti. Port numarası yanlış olabilir. Portu kontrol et ya da Otomatik bul'u dene."
+    );
+    expect(e.raw).toBe('Connection refused');
+    expect(errorDetail(e)).toBe('tcp · CONNECT_FAILED/refused · Connection refused');
+  });
+  it('no_route and net_unreachable add the Local Network hint', () => {
+    const nr = userMessage(tcp('No route to host'));
+    expect(nr.split('\n')[0]).toMatch(/^Adaptöre ulaşılamıyor\./);
+    expect(nr.split('\n')[1]).toBe(LOCAL_NETWORK_HINT);
+    const nu = userMessage(tcp('Network is unreachable'));
+    expect(nu).toMatch(/^Wi-Fi bağlantısı yok\./);
+    expect(nu).toContain(LOCAL_NETWORK_HINT);
+  });
+  it('timeouts (native and JS timer) share the IP copy', () => {
+    for (const raw of ['Operation timed out', 'Attempt to connect to host timed out', 'Timed out connecting to x (JS timer)']) {
+      expect(userMessage(tcp(raw))).toMatch(/^Adaptör bağlantıya cevap vermedi\. IP adresi yanlış olabilir/);
+    }
+    expect(errorDetail(tcp('Operation timed out'))).toBe('tcp · CONNECT_FAILED/timeout · Operation timed out');
+  });
+  it('unknown native text: generic copy, raw kept in detail', () => {
+    const e = tcp('Socket closed by peer ???');
+    expect(userMessage(e)).toBe('Adaptöre bağlanılamadı. Wi-Fi ağını, IP adresini ve portu kontrol et.');
+    expect(errorDetail(e)).toBe('tcp · CONNECT_FAILED/other · Socket closed by peer ???');
+  });
+  it('reset / setup / probe steps map to their copy', () => {
+    expect(userMessage(new OBDError('TIMEOUT', 'x', { step: 'reset' }))).toMatch(/^Wi-Fi bağlantısı kuruldu ama adaptör/);
+    expect(userMessage(new OBDError('TIMEOUT', 'x', { step: 'setup' }))).toMatch(/^Wi-Fi bağlantısı kuruldu ama adaptör/);
+    expect(userMessage(new OBDError('TIMEOUT', 'x', { step: 'probe' }))).toMatch(/^Adaptör çalışıyor ama araç cevap vermedi/);
+    expect(userMessage(new OBDError('UNABLE_TO_CONNECT', 'x', { step: 'probe' }))).toMatch(/^Adaptör çalışıyor/);
+  });
+  it('escapes CR/LF in the detail line', () => {
+    const e = new OBDError('PROBE_FAILED', 'm', { step: 'probe', raw: 'SEARCHING...\rUNABLE TO CONNECT' });
+    expect(errorDetail(e)).toBe('probe · PROBE_FAILED · SEARCHING...\\rUNABLE TO CONNECT');
+  });
+  it('keeps the mid-session disconnect message, also when the link drops during init', () => {
+    expect(userMessage(new OBDError('CONNECTION_CLOSED', 'socket closed'))).toMatch(/bağlantı koptu/);
+    expect(userMessage(new OBDError('CONNECTION_CLOSED', 'x', { step: 'probe' }))).toMatch(/bağlantı koptu/);
   });
 });

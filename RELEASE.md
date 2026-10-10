@@ -228,6 +228,12 @@ Leave "Sign-in required" unchecked. The app has no accounts.
 
 ## 6. Submit for review
 
+**Before the App Store build: turn OFF the tester Pro unlock.** In `eas.json`
+remove `EXPO_PUBLIC_TESTER_UNLOCK` from `build.production.env` (or set it to
+`"0"`), then build again. With it on, TestFlight and App Store builds show
+"Test için Pro'yu aç", which Apple rejects (Guideline 3.1.1).
+
+
 In App Store Connect, open the version, pick the TestFlight build, fill in the
 remaining fields, and choose **Add for Review**, then **Submit**. Common
 rejections for this kind of app:

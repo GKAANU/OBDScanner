@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PRO_LIFETIME, PRO_YEARLY, usePro, type ProFeature } from '../src/pro/entitlement';
+import { PRO_LIFETIME, PRO_YEARLY, TESTER_UNLOCK_ALLOWED, usePro, type ProFeature } from '../src/pro/entitlement';
 import { useOBD } from '../src/obd/context';
 import { useToast } from '../src/ui/toast';
 import { Icon, LogoMark } from '../src/ui/icons';
@@ -48,7 +48,7 @@ function isFeature(v: unknown): v is ProFeature {
 
 export default function ProScreen() {
   const { f } = useLocalSearchParams<{ f?: string }>();
-  const { isPro, products, busy, error, buy, restore, setDevPro } = usePro();
+  const { isPro, products, busy, error, buy, restore, setDevPro, testerPro } = usePro();
   const { state } = useOBD();
   const toast = useToast();
   const [selected, setSelected] = useState<string>(PRO_LIFETIME);
@@ -180,10 +180,10 @@ export default function ProScreen() {
           </Pressable>
         </View>
 
-        {__DEV__ ? (
+        {TESTER_UNLOCK_ALLOWED ? (
           <View style={s.dev}>
-            <Text style={s.devText}>Geliştirici: Pro'yu aç/kapat</Text>
-            <Toggle on={isPro} onChange={setDevPro} />
+            <Text style={s.devText}>Test sürümü: Pro'yu satın almadan aç</Text>
+            <Toggle on={testerPro} onChange={setDevPro} />
           </View>
         ) : null}
       </ScrollView>

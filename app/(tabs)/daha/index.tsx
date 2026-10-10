@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { useOBD } from '../../../src/obd/context';
-import { usePro } from '../../../src/pro/entitlement';
+import { TESTER_UNLOCK_ALLOWED, usePro } from '../../../src/pro/entitlement';
 import { useGarage } from '../../../src/garage/store';
 import { useDueDates } from '../../../src/garage/usePlan';
 import { daysText } from '../../../src/garage/dates';
 import { FUELS, type Fuel, type Vehicle } from '../../../src/garage/types';
 import { Icon, LogoMark, type IconName } from '../../../src/ui/icons';
-import { Button, Card, Screen, ScreenTitle, Sheet } from '../../../src/ui/primitives';
+import { Button, Card, Screen, ScreenTitle, Sheet, Toggle } from '../../../src/ui/primitives';
 import { colors, fonts } from '../../../src/ui/theme';
 import { formatThousands, parseKm, todayISO } from '../../../src/utils/format';
 
@@ -17,7 +17,7 @@ type Row = { key: string; title: string; sub: string; icon: IconName; iconColor?
 export default function DahaScreen() {
   const { state, config } = useOBD();
   const { vehicle, vehicles } = useGarage();
-  const { isPro } = usePro();
+  const { isPro, testerPro, setDevPro } = usePro();
   const due = useDueDates();
   const [editOpen, setEditOpen] = useState(false);
 
@@ -78,6 +78,16 @@ export default function DahaScreen() {
           <Icon name="chevronRight" size={13} color={colors.faint} stroke={2.2} />
         )}
       </Card>
+
+      {TESTER_UNLOCK_ALLOWED ? (
+        <Card style={styles.tester}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.proTitleSmall}>Test için Pro'yu aç</Text>
+            <Text style={styles.rowSub}>Sadece TestFlight sürümünde görünür; App Store sürümünde yoktur.</Text>
+          </View>
+          <Toggle on={testerPro} onChange={setDevPro} />
+        </Card>
+      ) : null}
 
       <Card style={{ marginTop: 10 }}>
         {rows.map((r, i) => (
@@ -250,6 +260,8 @@ function VehicleSheet({ visible, vehicle, onClose }: { visible: boolean; vehicle
 }
 
 const styles = StyleSheet.create({
+  tester: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, marginTop: 10, borderColor: 'rgba(251,191,36,0.35)' },
+  proTitleSmall: { color: colors.text, fontFamily: fonts.bodySemiBold, fontSize: 15 },
   proCard: { marginTop: 18, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderColor: 'rgba(251,191,36,0.28)' },
   proMark: { width: 44, height: 44, borderRadius: 12, backgroundColor: colors.inset, alignItems: 'center', justifyContent: 'center' },
   proTitle: { color: colors.text, fontFamily: fonts.bodySemiBold, fontSize: 16 },

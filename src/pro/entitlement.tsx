@@ -26,6 +26,14 @@ export const PRO_LIFETIME = 'otova.pro.lifetime';
 export const PRO_YEARLY = 'otova.pro.yearly';
 const PRO_SKUS = [PRO_LIFETIME, PRO_YEARLY];
 const CACHE_KEY = 'otova.pro.v1';
+const TESTER_KEY = 'otova.pro.tester';
+
+/**
+ * Tester unlock: only in dev builds or builds made with
+ * EXPO_PUBLIC_TESTER_UNLOCK=1 (TestFlight). Must be OFF for App Store
+ * releases (Guideline 3.1.1: features may only be unlocked via IAP).
+ */
+export const TESTER_UNLOCK_ALLOWED = __DEV__ || process.env.EXPO_PUBLIC_TESTER_UNLOCK === '1';
 
 export type ProProduct = { id: string; title: string; price: string; kind: 'lifetime' | 'yearly' };
 
@@ -40,8 +48,10 @@ type Ctx = {
   error: string | null;
   buy: (sku: string) => Promise<void>;
   restore: () => Promise<boolean>;
-  /** Development only: force Pro on/off for testing gates. */
+  /** Test builds only: force Pro on/off (persisted). No-op in App Store builds. */
   setDevPro: (on: boolean) => void;
+  /** True when the tester unlock is on. */
+  testerPro: boolean;
 };
 
 const ProContext = createContext<Ctx | null>(null);
@@ -96,6 +106,7 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
       try {
         const raw = await AsyncStorage.getItem(CACHE_KEY);
         if (raw && alive) setStorePro(!!(JSON.parse(raw) as { pro?: boolean }).pro);
+        if (TESTER_UNLOCK_ALLOWED && alive) setDevProState((await AsyncStorage.getItem(TESTER_KEY)) === '1');
       } catch {}
       if (alive) setReady(true);
       try {
@@ -172,11 +183,13 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
   }, [refresh]);
 
   const setDevPro = useCallback((on: boolean) => {
-    if (__DEV__) setDevProState(on);
+    if (!TESTER_UNLOCK_ALLOWED) return;
+    setDevProState(on);
+    AsyncStorage.setItem(TESTER_KEY, on ? '1' : '0').catch(() => {});
   }, []);
 
   const value = useMemo<Ctx>(
-    () => ({ ready, isPro: storePro || devPro, products, busy, error, buy, restore, setDevPro }),
+    () => ({ ready, isPro: storePro || devPro, products, busy, error, buy, restore, setDevPro, testerPro: devPro }),
     [ready, storePro, devPro, products, busy, error, buy, restore, setDevPro]
   );
 

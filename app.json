@@ -79,6 +79,7 @@
       "expo-router",
       "expo-font",
       "expo-iap",
+      "./plugins/withoutPushEntitlement",
       "expo-notifications",
       [
         "react-native-ble-plx",

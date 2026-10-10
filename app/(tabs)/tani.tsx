@@ -6,6 +6,7 @@ import { useScan, type ScanResult } from '../../src/obd/useScan';
 import { useGarage } from '../../src/garage/store';
 import { usePro, useProGate, type ProFeature } from '../../src/pro/entitlement';
 import { userMessage } from '../../src/obd/protocol';
+import { parseClearResponse } from '../../src/obd/parsers';
 import { inspectionVerdict, type Monitor } from '../../src/obd/health';
 import { dtcDetail, URGENCY_LABEL, URGENCY_TONE, type DtcDetail } from '../../src/obd/dtc-details';
 import type { FreezeFrame } from '../../src/obd/client';
@@ -203,18 +204,37 @@ export default function TaniScreen() {
   const onConfirmClear = useCallback(async () => {
     setClearing(true);
     setActionError(null);
+    const before = result ? [...result.stored, ...result.pending] : [];
     try {
-      await client.clearDTCs();
+      const outcome = parseClearResponse(await client.clearDTCs());
       setConfirm(false);
-      toast('Kodlar silindi', 'MIL söndü · kalıcı kod kalır', 2200);
-      void scan();
+      if (outcome === 'engine-running') {
+        setActionError('Araç, motor çalışırken kodların silinmesine izin vermedi. Motoru kapat, kontağı açık bırak ve tekrar dene.');
+        return;
+      }
+      if (outcome !== 'ok') {
+        setActionError(
+          outcome === 'refused'
+            ? 'Araç silme isteğini reddetti. Motor kapalı, kontak açıkken tekrar dene.'
+            : 'Araçtan silme onayı gelmedi. Motor kapalı, kontak açıkken tekrar dene.'
+        );
+        return;
+      }
+      toast('Kodlar silindi', 'Kontrol için yeniden taranıyor', 2200);
+      const after = await scan();
+      const back = after ? before.filter((c) => after.stored.includes(c) || after.pending.includes(c)) : [];
+      if (back.length) {
+        setActionError(
+          `Kodlar silindi ama ${back.join(', ')} hemen geri geldi. Arıza hâlâ aktif; sebebi giderilmeden kod tekrar oluşur.`
+        );
+      }
     } catch (e) {
       setConfirm(false);
       setActionError(userMessage(e));
     } finally {
       setClearing(false);
     }
-  }, [client, toast, scan]);
+  }, [client, toast, scan, result]);
 
   const d: DtcDetail | null = detail ? dtcDetail(detail.code) : null;
 

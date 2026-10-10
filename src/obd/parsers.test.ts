@@ -1,4 +1,5 @@
 import {
+  parseClearResponse,
   parseDTCs,
   parseVIN,
   parseReadiness,
@@ -298,5 +299,20 @@ describe('odometer PID A6', () => {
     expect(parsePidResponse(PID_BY_ID.ODO, '41 A6 00 07 6B 1C >')).toBeCloseTo(48617.2, 1);
     expect(parsePidResponse(PID_BY_ID.ODO, '41A600000000')).toBe(0);
     expect(parsePidResponse(PID_BY_ID.ODO, '41 A6 00 07 >')).toBeNull();
+  });
+});
+
+describe('parseClearResponse', () => {
+  it('positive reply', () => {
+    expect(parseClearResponse('44\r\r>')).toBe('ok');
+    expect(parseClearResponse('7E8 01 44\r')).toBe('ok');
+  });
+  it('engine running / refused', () => {
+    expect(parseClearResponse('7F 04 22\r>')).toBe('engine-running');
+    expect(parseClearResponse('7F0411')).toBe('refused');
+  });
+  it('no response', () => {
+    expect(parseClearResponse('NO DATA\r>')).toBe('no-response');
+    expect(parseClearResponse('')).toBe('no-response');
   });
 });

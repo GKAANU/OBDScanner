@@ -260,3 +260,20 @@ export function detectOBDError(raw: string): string | null {
   if (upper.includes('?')) return 'UNKNOWN_COMMAND';
   return null;
 }
+
+export type ClearResult = 'ok' | 'engine-running' | 'refused' | 'no-response';
+
+/**
+ * Mode 04 reply: "44" = cleared. A negative response "7F 04 xx" means the
+ * ECU refused; NRC 22 (conditions not correct) usually means the engine is
+ * running. Several ECUs may answer; any positive reply counts as cleared.
+ */
+export function parseClearResponse(raw: string): ClearResult {
+  const upper = raw.toUpperCase();
+  const tokens = upper.split(/[^0-9A-F]+/).filter(Boolean);
+  const compact = upper.replace(/[^0-9A-F]/g, '');
+  if (tokens.includes('44') || tokens.some((t) => /^44$|^7E[89A-F]0144$/.test(t))) return 'ok';
+  const neg = /7F04([0-9A-F]{2})/.exec(compact);
+  if (neg) return neg[1] === '22' ? 'engine-running' : 'refused';
+  return 'no-response';
+}

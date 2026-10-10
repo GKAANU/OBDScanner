@@ -291,3 +291,12 @@ describe('parseSupportedPids (multiple ECUs)', () => {
     expect(parseSupportedPids('42 00 01 80 00 00 00 >', '00', '02', '00')).toEqual([]);
   });
 });
+
+describe('odometer PID A6', () => {
+  it('decodes 0.1 km units across 4 bytes', () => {
+    // 0x0007_6B1C = 486172 -> 48617.2 km
+    expect(parsePidResponse(PID_BY_ID.ODO, '41 A6 00 07 6B 1C >')).toBeCloseTo(48617.2, 1);
+    expect(parsePidResponse(PID_BY_ID.ODO, '41A600000000')).toBe(0);
+    expect(parsePidResponse(PID_BY_ID.ODO, '41 A6 00 07 >')).toBeNull();
+  });
+});

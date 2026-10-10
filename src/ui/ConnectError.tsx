@@ -33,5 +33,5 @@ export function ConnectErrorText({
 const styles = StyleSheet.create({
   message: { color: colors.error, fontFamily: fonts.body, fontSize: fontSize.m },
   messageCompact: { fontSize: fontSize.s },
-  detail: { color: colors.muted, fontFamily: fonts.mono, fontSize: fontSize.xs, marginTop: 2 },
+  detail: { color: colors.faint, fontFamily: fonts.mono, fontSize: fontSize.xs, marginTop: 2 },
 });

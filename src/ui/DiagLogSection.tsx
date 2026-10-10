@@ -57,16 +57,16 @@ export function DiagLogSection() {
 const styles = StyleSheet.create({
   wrap: { gap: spacing.s, marginTop: spacing.s },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.xs },
-  title: { color: colors.body, fontFamily: fonts.bodyMedium, fontSize: fontSize.m },
-  toggle: { color: colors.accent, fontFamily: fonts.bodyMedium, fontSize: fontSize.s },
+  title: { color: colors.text, fontFamily: fonts.bodyMedium, fontSize: fontSize.m },
+  toggle: { color: colors.blue, fontFamily: fonts.bodyMedium, fontSize: fontSize.s },
   box: {
     backgroundColor: colors.bg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.line,
     borderRadius: radius.m,
     padding: spacing.s,
     gap: 2,
   },
-  line: { color: colors.muted, fontFamily: fonts.mono, fontSize: 10 },
-  empty: { color: colors.muted, fontFamily: fonts.body, fontSize: fontSize.s, fontStyle: 'italic' },
+  line: { color: colors.faint, fontFamily: fonts.mono, fontSize: 10 },
+  empty: { color: colors.faint, fontFamily: fonts.body, fontSize: fontSize.s, fontStyle: 'italic' },
 });

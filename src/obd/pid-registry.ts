@@ -50,6 +50,7 @@ export const PID_REGISTRY: PIDDef[] = [
   { pid: '46', id: 'AAT',   label: 'Ortam hava sıcaklığı',      unit: '°C',    group: 'engine',     bytes: 1, parse: (b) => b[0] - 40 },
   { pid: '5C', id: 'OILT',  label: 'Motor yağ sıcaklığı',       unit: '°C',    group: 'engine',     bytes: 1, parse: (b) => b[0] - 40 },
   { pid: '5E', id: 'FRATE', label: 'Yakıt tüketimi',            unit: 'L/h',   group: 'fuel',       bytes: 2, parse: (b) => (b[0] * 256 + b[1]) / 20 },
+  { pid: 'A6', id: 'ODO',   label: 'Kilometre sayacı',          unit: 'km',    group: 'engine',     bytes: 4, parse: (b) => ((b[0] * 16777216) + (b[1] << 16) + (b[2] << 8) + b[3]) / 10 },
 ];
 
 export const PID_BY_ID: Record<string, PIDDef> = Object.fromEntries(

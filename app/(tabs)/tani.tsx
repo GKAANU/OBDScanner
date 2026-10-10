@@ -125,7 +125,7 @@ export default function TaniScreen() {
 
   const startScan = useCallback(() => {
     if (!connected) {
-      router.push('/daha/baglanti');
+      router.push('/baglan');
       return;
     }
     void scan();

@@ -20,7 +20,8 @@
         "usesNonExemptEncryption": false
       },
       "infoPlist": {
-        "NSLocalNetworkUsageDescription": "Otova, OBD-II adaptörünüze yerel ağ üzerinden bağlanır. Hiçbir veri internete gönderilmez."
+        "NSLocalNetworkUsageDescription": "Otova, OBD-II adaptörünüze yerel ağ üzerinden bağlanır. Hiçbir veri internete gönderilmez.",
+        "NSBluetoothAlwaysUsageDescription": "Otova, Bluetooth OBD-II adaptörünüze bağlanmak için Bluetooth kullanır. Hiçbir veri internete gönderilmez."
       },
       "privacyManifests": {
         "NSPrivacyTracking": false,
@@ -78,7 +79,15 @@
       "expo-router",
       "expo-font",
       "expo-iap",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "neverForLocation": true,
+          "bluetoothAlwaysPermission": "Otova, Bluetooth OBD-II adaptörünüze bağlanmak için Bluetooth kullanır. Hiçbir veri internete gönderilmez."
+        }
+      ]
     ],
     "extra": {
       "router": {},

@@ -23,6 +23,7 @@ import {
 } from './scan';
 import { diagLog } from './diag-log';
 import { DemoTransport } from './transport-demo';
+import { BleTransport } from './transport-ble';
 
 import { canStartConnect, resolveConnectConfig, type ConnectionState } from './connect-config';
 
@@ -99,6 +100,9 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
               timeoutMs: parsed.timeoutMs ?? DEFAULT_OBD_CONFIG.timeoutMs,
               slowEcu: !!parsed.slowEcu,
               demo: !!parsed.demo,
+              link: parsed.link === 'ble' ? 'ble' : 'wifi',
+              bleId: typeof parsed.bleId === 'string' ? parsed.bleId : undefined,
+              bleName: typeof parsed.bleName === 'string' ? parsed.bleName : undefined,
             });
           }
         }
@@ -172,15 +176,18 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
     setErrorDetail(null);
     setStatusText(status);
     setState('connecting');
+    const useBle = !cfg.demo && cfg.link === 'ble' && !!cfg.bleId;
     diagLog.startAttempt(
-      `connect start ${cfg.demo ? 'demo' : `${cfg.host}:${cfg.port}`} slowEcu=${!!cfg.slowEcu} ` +
+      `connect start ${cfg.demo ? 'demo' : useBle ? `ble ${cfg.bleName ?? ''} ${cfg.bleId}` : `${cfg.host}:${cfg.port}`} slowEcu=${!!cfg.slowEcu} ` +
         `timeoutMs=${cfg.timeoutMs ?? '-'} tcp=${TCP_CONNECT_TIMEOUTS.connectTimeoutMs}/${TCP_CONNECT_TIMEOUTS.backstopMs}ms`
     );
     try {
       // Demo mode never opens a socket: it talks to the in-memory simulator.
       const transport = cfg.demo
         ? new DemoTransport()
-        : new TcpTransport(cfg.host, cfg.port, { ...TCP_CONNECT_TIMEOUTS, log: diagLog });
+        : useBle
+          ? new BleTransport(cfg.bleId as string, cfg.bleName ?? '', { log: diagLog })
+          : new TcpTransport(cfg.host, cfg.port, { ...TCP_CONNECT_TIMEOUTS, log: diagLog });
       await c.connect(transport, cfg, {
         onRetry: () => {
           if (!stale()) setStatusText('Tekrar deneniyor…');
@@ -264,7 +271,7 @@ export function OBDProvider({ children }: { children: React.ReactNode }) {
       connectingRef.current = false;
       if (result.found) {
         const { host, port } = result.found;
-        await startConnect({ host, port, demo: false }, `Adaptör bulundu: ${hostPort(result.found)}. Bağlanılıyor…`);
+        await startConnect({ host, port, demo: false, link: 'wifi' }, `Adaptör bulundu: ${hostPort(result.found)}. Bağlanılıyor…`);
         return;
       }
       diagLog.log(`state error: ${scanFailureDetail(result)}`);

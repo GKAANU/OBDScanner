@@ -35,7 +35,7 @@ export function ConnectCard({ title, body }: { title: string; body: string }) {
     <View style={cardStyles.card}>
       <Text style={cardStyles.title}>{title}</Text>
       <Text style={cardStyles.body}>{body}</Text>
-      <Pressable onPress={() => router.push('/daha/baglanti')} style={({ pressed }) => [cardStyles.btn, pressed && { opacity: 0.75 }]}>
+      <Pressable onPress={() => router.push('/baglan')} style={({ pressed }) => [cardStyles.btn, pressed && { opacity: 0.75 }]}>
         <Text style={cardStyles.btnText}>Bağlan</Text>
       </Pressable>
     </View>

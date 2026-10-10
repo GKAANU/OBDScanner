@@ -172,8 +172,8 @@ describe('connect error messages and detail', () => {
     expect(errorDetail(e)).toBe('tcp · CONNECT_FAILED/other · Socket closed by peer ???');
   });
   it('reset / setup / probe steps map to their copy', () => {
-    expect(userMessage(new OBDError('TIMEOUT', 'x', { step: 'reset' }))).toMatch(/^Wi-Fi bağlantısı kuruldu ama adaptör/);
-    expect(userMessage(new OBDError('TIMEOUT', 'x', { step: 'setup' }))).toMatch(/^Wi-Fi bağlantısı kuruldu ama adaptör/);
+    expect(userMessage(new OBDError('TIMEOUT', 'x', { step: 'reset' }))).toMatch(/^Adaptöre bağlanıldı ama komutlara/);
+    expect(userMessage(new OBDError('TIMEOUT', 'x', { step: 'setup' }))).toMatch(/^Adaptöre bağlanıldı ama komutlara/);
     expect(userMessage(new OBDError('TIMEOUT', 'x', { step: 'probe' }))).toMatch(/^Adaptör çalışıyor ama araç cevap vermedi/);
     expect(userMessage(new OBDError('UNABLE_TO_CONNECT', 'x', { step: 'probe' }))).toMatch(/^Adaptör çalışıyor/);
   });
@@ -184,5 +184,16 @@ describe('connect error messages and detail', () => {
   it('keeps the mid-session disconnect message, also when the link drops during init', () => {
     expect(userMessage(new OBDError('CONNECTION_CLOSED', 'socket closed'))).toMatch(/bağlantı koptu/);
     expect(userMessage(new OBDError('CONNECTION_CLOSED', 'x', { step: 'probe' }))).toMatch(/bağlantı koptu/);
+  });
+});
+
+describe('BLE error messages', () => {
+  it('maps BLE codes and the ble step to Bluetooth copy', () => {
+    expect(userMessage(new OBDError('BLE_OFF', 'off'))).toMatch(/^Bluetooth kapalı/);
+    expect(userMessage(new OBDError('BLE_UNAUTHORIZED', 'x'))).toMatch(/Bluetooth izni yok/);
+    expect(userMessage(new OBDError('BLE_NO_CHANNEL', 'x'))).toMatch(/OBD veri kanalı bulunamadı/);
+    expect(userMessage(new OBDError('CONNECT_FAILED', 'Device disconnected', { step: 'ble' }))).toMatch(
+      /^Bluetooth adaptöre bağlanılamadı/
+    );
   });
 });

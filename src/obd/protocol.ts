@@ -103,7 +103,7 @@ export function terminalPolicy(command: string): TerminalPolicy {
 }
 
 /** Connect/init phase an error happened in (for messages and the log). */
-export type ConnectStep = 'tcp' | 'reset' | 'setup' | 'adapter-info' | 'probe';
+export type ConnectStep = 'tcp' | 'ble' | 'reset' | 'setup' | 'adapter-info' | 'probe';
 
 /** Coarse class of a TCP connect failure, from the native error text. */
 export type ConnectErrorKind = 'refused' | 'no_route' | 'net_unreachable' | 'timeout' | 'other';
@@ -118,7 +118,10 @@ export type OBDErrorCode =
   | 'CAN_ERROR'
   | 'NO_DATA'
   | 'PROBE_FAILED'
-  | 'ADAPTER_NOT_FOUND';
+  | 'ADAPTER_NOT_FOUND'
+  | 'BLE_OFF'
+  | 'BLE_UNAUTHORIZED'
+  | 'BLE_NO_CHANNEL';
 
 /** Thrown by OBDClient; `code` is stable, `message` is for logs only. */
 export class OBDError extends Error {
@@ -181,7 +184,16 @@ export function connectMessage(kind: ConnectErrorKind): string {
 }
 
 export const RESET_MESSAGE =
-  'Wi-Fi bağlantısı kuruldu ama adaptör komutlara cevap vermiyor. Adaptörü söküp tak, 10 saniye bekle ve tekrar dene.';
+  'Adaptöre bağlanıldı ama komutlara cevap vermiyor. Adaptörü söküp tak, 10 saniye bekle ve tekrar dene.';
+
+export const BLE_MESSAGES = {
+  connect:
+    'Bluetooth adaptöre bağlanılamadı. Adaptör takılı ve kontak açık mı? Car Scanner gibi başka bir uygulama bağlıysa kapatıp tekrar dene.',
+  off: "Bluetooth kapalı. Denetim Merkezi'nden Bluetooth'u açıp tekrar dene.",
+  unauthorized: "Otova'nın Bluetooth izni yok. Ayarlar > Otova > Bluetooth'u açıp tekrar dene.",
+  noChannel:
+    'Bu cihazda OBD veri kanalı bulunamadı. Bir OBD adaptörü olmayabilir; listeden başka bir cihaz seç.',
+} as const;
 export const PROBE_MESSAGE =
   'Adaptör çalışıyor ama araç cevap vermedi. Kontağı açık konuma getir (motoru çalıştırmak şart değil) ve tekrar dene.';
 export const NOT_FOUND_MESSAGE =
@@ -227,13 +239,17 @@ export function userMessage(err: unknown): string {
   const kind = connectErrorKind(err);
   if (kind) return TCP_MESSAGES[kind];
   // The link dropping mid-init is not "adapter/vehicle silent".
-  if (code === 'CONNECTION_CLOSED') return 'Adaptörle bağlantı koptu. Wi-Fi’ı kontrol edip tekrar bağlan.';
+  if (code === 'CONNECTION_CLOSED') return 'Adaptörle bağlantı koptu. Adaptörün takılı olduğunu kontrol edip tekrar bağlan.';
+  if (code === 'BLE_OFF') return BLE_MESSAGES.off;
+  if (code === 'BLE_UNAUTHORIZED') return BLE_MESSAGES.unauthorized;
+  if (code === 'BLE_NO_CHANNEL') return BLE_MESSAGES.noChannel;
+  if (step === 'ble') return BLE_MESSAGES.connect;
   if (step === 'reset' || step === 'setup') return RESET_MESSAGE;
   if (step === 'probe') return PROBE_MESSAGE;
   if (code === 'ADAPTER_NOT_FOUND') return NOT_FOUND_MESSAGE;
 
   if (code === 'TIMEOUT' || (!code && /timeout|timed out/i.test(msg))) {
-    return 'Adaptör cevap vermedi. Wi-Fi bağlantısını ve adaptörü kontrol et.';
+    return 'Adaptör cevap vermedi. Bağlantıyı ve adaptörü kontrol et.';
   }
   if (code === 'NOT_CONNECTED') {
     return 'Adaptöre bağlı değilsin. Önce bağlan.';

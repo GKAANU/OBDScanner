@@ -156,7 +156,7 @@ export default function GarajScreen() {
       <View style={styles.header}>
         <Wordmark size={19} />
         <Pressable
-          onPress={() => router.push('/daha/baglanti')}
+          onPress={() => router.push('/baglan')}
           style={[styles.pill, connected ? styles.pillOn : styles.pillOff]}
         >
           <View style={[styles.pillDot, { backgroundColor: connected ? colors.ok : '#fff' }]} />

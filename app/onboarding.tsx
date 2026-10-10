@@ -27,7 +27,7 @@ type Form = { name: string; brand: string; model: string; year: string; km: stri
 
 export default function Onboarding() {
   const { vehicle: current, saveVehicle, addVehicle } = useGarage();
-  const { state, connect, hydrated } = useOBD();
+  const { state, hydrated } = useOBD();
   // mode=add: a new (additional) vehicle; start empty and skip the splash.
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   const isAdd = mode === 'add';
@@ -207,8 +207,8 @@ export default function Onboarding() {
         <Card style={{ marginTop: 12 }}>
           {[
             "Dongle'ı direksiyon altındaki OBD soketine tak, kontağı aç.",
-            "iPhone Ayarlar › Wi-Fi'den dongle ağına katıl.",
-            "Buraya dön ve Bağlan'a dokun.",
+            "Bağlan'a dokun; Bluetooth ya da Wi-Fi dongle'ını birlikte bulalım.",
+            "Bağlanınca araç verileri gelir; istersen sonra da bağlanabilirsin.",
           ].map((t, i) => (
             <View key={t}>
               {i > 0 ? <Divider /> : null}
@@ -220,7 +220,7 @@ export default function Onboarding() {
           ))}
         </Card>
         {state === 'error' && connectRequested ? (
-          <Text style={styles.error}>Bağlanamadı. Dongle ağına bağlı olduğundan emin ol ya da sonra dene.</Text>
+          <Text style={styles.error}>Bağlanamadı. Tekrar dene ya da sonra bağlan.</Text>
         ) : null}
         <View style={styles.flex} />
         <Button
@@ -229,7 +229,7 @@ export default function Onboarding() {
           disabled={!hydrated}
           onPress={() => {
             setConnectRequested(true);
-            void connect({ demo: false });
+            router.push('/baglan');
           }}
         />
         <Pressable onPress={finish} style={styles.later}>

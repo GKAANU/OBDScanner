@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Alert, Keyboard, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useOBD } from '../../../src/obd/context';
 import { HOST_PRESETS, sameEndpoint, type Endpoint } from '../../../src/obd/presets';
@@ -17,6 +18,7 @@ function parseEndpoint(host: string, port: string): Endpoint | null {
 }
 
 export default function BaglantiScreen() {
+  const router = useRouter();
   const {
     state,
     config,
@@ -69,14 +71,14 @@ export default function BaglantiScreen() {
     if (!ep) return;
     Keyboard.dismiss();
     // Real adapter only: a demo flag saved earlier must not leak in here.
-    void connect({ ...ep, demo: false });
+    void connect({ ...ep, demo: false, link: 'wifi' });
   };
 
   const onReconnect = () => {
     const ep = readEndpoint();
     if (!ep) return;
     disconnect();
-    void connect({ ...ep, demo: !!config.demo });
+    void connect(config.link === 'ble' && config.bleId ? { demo: !!config.demo } : { ...ep, demo: !!config.demo, link: 'wifi' });
   };
 
   const onAutoDetect = () => {
@@ -108,6 +110,19 @@ export default function BaglantiScreen() {
           <Text style={styles.statusSub}>{sub}</Text>
         </View>
       </View>
+
+      <Card style={styles.wizard} onPress={() => router.push('/baglan')}>
+        <Icon name={config.link === 'ble' ? 'bluetooth' : 'wifi'} size={20} color={colors.blue} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.statusTitle}>Bağlantı sihirbazı</Text>
+          <Text style={styles.statusSub}>
+            {config.link === 'ble' && config.bleId
+              ? `Bluetooth · ${config.bleName || 'adaptör'} · değiştir`
+              : 'Bluetooth ya da Wi-Fi dongle bul ve bağlan'}
+          </Text>
+        </View>
+        <Icon name="chevronRight" size={14} color={colors.faint} stroke={2.2} />
+      </Card>
 
       {state === 'error' && errorMessage ? (
         <View style={styles.errorBox}>
@@ -227,6 +242,7 @@ export default function BaglantiScreen() {
 }
 
 const styles = StyleSheet.create({
+  wizard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, marginTop: 10 },
   status: {
     marginTop: 18,
     backgroundColor: colors.cardHi,

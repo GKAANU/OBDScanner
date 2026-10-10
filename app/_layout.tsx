@@ -53,6 +53,7 @@ export default function RootLayout() {
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen name="onboarding" options={{ gestureEnabled: false, animation: 'fade' }} />
                 <Stack.Screen name="pro" options={{ presentation: 'modal' }} />
+                <Stack.Screen name="baglan" options={{ presentation: 'modal' }} />
               </Stack>
             </ToastProvider>
           </ProProvider>

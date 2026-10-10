@@ -41,6 +41,11 @@ export type OBDConfig = {
   slowEcu?: boolean;
   /** Demo mode: talk to the built-in simulator instead of a real dongle. */
   demo?: boolean;
+  /** How to reach the adapter (default Wi-Fi). */
+  link?: 'wifi' | 'ble';
+  /** Bluetooth LE adapter (iOS peripheral id) and its name, when link is 'ble'. */
+  bleId?: string;
+  bleName?: string;
 };
 
 export type SendOptions = {

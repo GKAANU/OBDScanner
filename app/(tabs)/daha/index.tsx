@@ -23,7 +23,7 @@ export default function DahaScreen() {
 
   const first = due[0];
   const docSub = first ? `${first.name} ${daysText(first.days)} · sigorta · kasko · MTV` : 'Muayene, sigorta, kasko, MTV';
-  const endpoint = config.demo ? 'Demo' : `${config.host}:${config.port}`;
+  const endpoint = config.demo ? 'Demo' : config.link === 'ble' && config.bleId ? `Bluetooth · ${config.bleName || 'adaptör'}` : `${config.host}:${config.port}`;
   const connected = state === 'ready';
 
   const rows: Row[] = [
@@ -50,7 +50,7 @@ export default function DahaScreen() {
       key: 'baglanti',
       title: 'Bağlantı ayarları',
       sub: `${connected ? 'Bağlı' : 'Bağlı değil'} · ${endpoint}`,
-      icon: 'wifi',
+      icon: config.link === 'ble' ? 'bluetooth' : 'wifi',
       iconColor: connected ? colors.ok : undefined,
       onPress: () => router.push('/daha/baglanti'),
     },

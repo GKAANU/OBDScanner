@@ -212,7 +212,7 @@ export default function CanliScreen() {
         <Card hero style={s.offCard}>
           <Text style={s.offTitle}>Canlı veri için dongle'ı bağla</Text>
           <Text style={s.offBody}>Bağlıyken devir, hız, sıcaklık ve diğer sensörler saniyede birkaç kez güncellenir.</Text>
-          <Button label="Bağlan" onPress={() => router.push('/daha/baglanti')} style={s.offBtn} />
+          <Button label="Bağlan" onPress={() => router.push('/baglan')} style={s.offBtn} />
           <View style={{ marginTop: 14 }}>
             <LinkButton label="Demo modunu dene" onPress={() => void connect({ demo: true })} />
           </View>

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Otova</title>
+<meta name="description" content="Otova: iPhone için Türkçe araç asistanı ve OBD-II tarayıcı.">
+<meta name="color-scheme" content="dark">
+<meta name="referrer" content="no-referrer">
+<style>
+:root{--bg:#0c0b0a;--card:#181614;--line:#27231f;--text:#f0ede8;--muted:#a8a29e;--amber:#fbbf24;--link:#60a5fa}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:720px;margin:0 auto;padding:0 16px}
+header{border-bottom:1px solid var(--line)}
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:18px 0}
+.brand{display:flex;align-items:center;gap:8px;color:var(--text);text-decoration:none;font-weight:700;font-size:20px;letter-spacing:-.01em}
+.brand svg{width:30px;height:30px;display:block}
+nav{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:15px}
+nav a{color:var(--muted);text-decoration:none;padding:4px 0}
+nav a:hover,nav a[aria-current=page]{color:var(--text)}
+nav a[aria-current=page]{border-bottom:2px solid var(--amber)}
+main{padding:32px 0 48px}
+h1{font-size:30px;line-height:1.2;letter-spacing:-.02em;margin:0 0 8px}
+h2{font-size:21px;line-height:1.3;margin:36px 0 10px}
+h3{font-size:17px;margin:24px 0 6px}
+p,ul,ol{margin:0 0 14px}
+ul,ol{padding-left:22px}
+li{margin:4px 0}
+a{color:var(--link)}
+strong{color:var(--text)}
+.muted{color:var(--muted)}
+.lead{font-size:18px;color:var(--muted);margin-bottom:24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:0 0 14px}
+.card h3{margin-top:0}
+.card p:last-child,.card ul:last-child{margin-bottom:0}
+.warn{border-left:3px solid var(--amber)}
+.grid{display:grid;grid-template-columns:1fr;gap:12px}
+@media(min-width:600px){.grid{grid-template-columns:1fr 1fr}}
+.grid .card{margin:0}
+code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.92em;color:var(--amber);background:#211e1b;padding:1px 5px;border-radius:4px}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+details{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:0 0 10px}
+summary{cursor:pointer;font-weight:600}
+details[open] summary{margin-bottom:8px}
+.links{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}
+.btn{display:inline-block;border:1px solid var(--line);background:var(--card);color:var(--text);text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:600}
+.btn:hover{border-color:var(--amber)}
+footer{border-top:1px solid var(--line);padding:20px 0 32px;font-size:14px;color:var(--muted)}
+footer p{margin:4px 0}
+</style>
+</head>
+<body>
+<header><div class="wrap top">
+<a class="brand" href="index.html" aria-label="Otova ana sayfa"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M17 18L33 32L17 46" fill="none" stroke="#f0ede8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><rect x="37" y="40" width="12" height="6" rx="1.5" fill="#fbbf24"/></svg><span>Otova</span></a>
+<nav aria-label="Site"><a href="index.html" aria-current="page">Ana sayfa</a><a href="gizlilik.html">Gizlilik</a><a href="kosullar.html">Koşullar</a><a href="destek.html">Destek</a></nav>
+</div></header>
+<main class="wrap">
+
+<h1>Otova</h1>
+<p class="lead">iPhone için Türkçe araç asistanı ve OBD-II tarayıcı. Bakım planını, belge tarihlerini ve servis geçmişini tek yerde tut; bir ELM327 adaptör taktığında aracının arıza kodlarını ve canlı sensör verilerini oku.</p>
+
+<!-- TODO: App Store linki -->
+<p class="muted">Otova henüz App Store'da yayında değil.</p>
+
+<h2>Adaptör olmadan</h2>
+<div class="grid">
+<div class="card"><h3>Garaj</h3><p>Aracın, bakım durumu ve yaklaşan tarihler tek ekranda.</p></div>
+<div class="card"><h3>Bakım</h3><p>Yakıt türüne göre genel bakım aralıkları (km ve süre), servis geçmişi ve tahmini bir sonraki bakım.</p></div>
+<div class="card"><h3>Belgeler ve tarihler</h3><p>Muayene, trafik sigortası, kasko ve MTV tarihlerini takip et.</p></div>
+<div class="card"><h3>Demo modu</h3><p>Adaptörün yoksa uygulamayı simüle edilmiş bir araçla dene. Demo verileri gerçek değildir.</p></div>
+</div>
+
+<h2>ELM327 adaptör ile</h2>
+<div class="grid">
+<div class="card"><h3>Tanı</h3><p>Kayıtlı, bekleyen ve kalıcı hata kodları; kodların sade Türkçe açıklaması ve "Muayeneye hazır mı?" kontrolü.</p></div>
+<div class="card"><h3>Canlı veri</h3><p>Devir, hız, soğutma sıvısı sıcaklığı gibi standart sensörler göstergelerle.</p></div>
+<div class="card"><h3>Araç bilgisi</h3><p>VIN, ECU adı, kalibrasyon kimliği, hazırlık monitörleri ve desteklenen PID'ler.</p></div>
+<div class="card"><h3>Kopyala</h3><p>Değerleri ve raporları düz metin olarak kopyala; istediğin yere kendin yapıştır.</p></div>
+</div>
+
+<div class="card warn" style="margin-top:14px">
+<p>Otova yalnızca standart OBD-II motor ve emisyon verilerini <strong>okur</strong>; tek istisna, senin onayınla gönderilen hata kodu silme komutudur. ABS, hava yastığı gibi üreticiye özel modüllere erişmez, ayar veya yazılım değişikliği yapmaz, arızaları gidermez. OBD-II genellikle 2001 sonrası benzinli ve 2004 sonrası dizel araçların çoğunda bulunur; her araçla uyum garanti edilmez.</p>
+</div>
+
+<h2>Gizlilik</h2>
+<p>Hesap yok, sunucu yok, analiz veya reklam yok. Tüm verilerin cihazında kalır. Uygulama yalnızca kendi OBD-II adaptörüne yerel Wi-Fi veya Bluetooth LE üzerinden bağlanır.</p>
+
+<h2>Otova Pro</h2>
+<p>Temel özellikler ücretsizdir. Otova Pro; tüm kod açıklamaları, freeze frame, tüm canlı sensörler, akü testi, ikinci el kontrolü, terminal, PDF rapor, birden fazla araç, sınırsız servis geçmişi ve hatırlatmalar gibi ek özellikleri açar. Ömür boyu tek seferlik satın alma veya yıllık abonelik olarak App Store üzerinden sunulur.</p>
+
+<div class="links">
+<a class="btn" href="gizlilik.html">Gizlilik Politikası</a>
+<a class="btn" href="kosullar.html">Kullanım Koşulları</a>
+<a class="btn" href="destek.html">Destek</a>
+</div>
+
+</main>
+<footer><div class="wrap">
+<p>Otova, bağımsız bir geliştirici tarafından geliştirilen bir iOS uygulamasıdır. Herhangi bir araç üreticisiyle bağlantılı değildir.</p>
+<p>İletişim: <!-- TODO: destek@ORNEK yerine gercek destek e-posta adresini yaz --><a href="mailto:destek@ORNEK">destek@ORNEK</a></p>
+<p>Son güncelleme: 11 Ekim 2026</p>
+</div></footer>
+</body>
+</html>

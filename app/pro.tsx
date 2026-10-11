@@ -9,9 +9,17 @@ import { Icon, LogoMark } from '../src/ui/icons';
 import { Button, Toggle } from '../src/ui/primitives';
 import { colors, fonts, tabular } from '../src/ui/theme';
 
-const TERMS_URL = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
-// TODO(user): publish the privacy policy at this address before App Review.
-const PRIVACY_URL = 'https://otova.app/gizlilik';
+// Served by GitHub Pages from docs/ (Settings > Pages > main /docs).
+// kosullar.html links Apple's Standard EULA, which governs the purchases.
+const TERMS_URL = 'https://gkaanu.github.io/OBDScanner/kosullar.html';
+const PRIVACY_URL = 'https://gkaanu.github.io/OBDScanner/gizlilik.html';
+
+// Guideline 3.1.2: auto-renewable subscription terms shown next to the buy button.
+const SUB_DISCLOSURE =
+  'Yıllık abonelik 1 yıl sürer ve otomatik yenilenir. Ödeme, satın alma onaylandığında Apple hesabından alınır. ' +
+  'Dönem bitmeden en az 24 saat önce iptal edilmezse abonelik aynı süre ve fiyatla yenilenir; yenileme ücreti dönem ' +
+  'bitmeden önceki 24 saat içinde alınır. Aboneliği iPhone Ayarlar > Apple hesabın > Abonelikler bölümünden ' +
+  'yönetebilir veya iptal edebilirsin. Ömür boyu seçeneği tek seferlik ödemedir, yenilenmez.';
 
 const WHY: Record<ProFeature, string> = {
   'dtc-detail': 'Tüm kodların Türkçe detayı ve "sürmeye devam" yorumu Pro\'da.',
@@ -138,7 +146,10 @@ export default function ProScreen() {
                       <Text style={s.productNote}>Abonelik otomatik yenilenir, App Store ayarlarından iptal edebilirsin.</Text>
                     ) : null}
                   </View>
-                  <Text style={[s.price, tabular]}>{p.price}</Text>
+                  <Text style={[s.price, tabular]}>
+                    {p.price}
+                    {p.kind === 'yearly' ? <Text style={s.per}> / yıl</Text> : null}
+                  </Text>
                 </Pressable>
               );
             })}
@@ -170,9 +181,13 @@ export default function ProScreen() {
           <Text style={s.link}>Satın alımları geri yükle</Text>
         </Pressable>
 
+        {!isPro && products.some((p) => p.kind === 'yearly') ? (
+          <Text style={s.disclosure}>{SUB_DISCLOSURE}</Text>
+        ) : null}
+
         <View style={s.legal}>
           <Pressable onPress={() => void Linking.openURL(TERMS_URL)} hitSlop={6}>
-            <Text style={s.legalLink}>Kullanım koşulları</Text>
+            <Text style={s.legalLink}>Kullanım koşulları (EULA)</Text>
           </Pressable>
           <Text style={s.legalDot}>·</Text>
           <Pressable onPress={() => void Linking.openURL(PRIVACY_URL)} hitSlop={6}>
@@ -279,6 +294,8 @@ const s = StyleSheet.create({
   badgeText: { color: colors.amber, fontFamily: fonts.bodySemiBold, fontSize: 11 },
   productNote: { color: colors.muted, fontFamily: fonts.body, fontSize: 12, lineHeight: 17, marginTop: 4 },
   price: { color: colors.text, fontFamily: fonts.bodySemiBold, fontSize: 17 },
+  per: { color: colors.muted, fontFamily: fonts.body, fontSize: 13 },
+  disclosure: { color: colors.faint, fontFamily: fonts.body, fontSize: 11.5, lineHeight: 16, marginTop: 14, textAlign: 'center' },
   notice: {
     marginTop: 18,
     padding: 16,

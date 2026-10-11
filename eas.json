@@ -25,10 +25,22 @@
       "env": {
         "EXPO_PUBLIC_TESTER_UNLOCK": "1"
       }
+    },
+    "store": {
+      "extends": "production",
+      "env": {
+        "EXPO_PUBLIC_TESTER_UNLOCK": "0"
+      }
     }
   },
   "submit": {
     "production": {
+      "ios": {
+        "ascAppId": "6815600896",
+        "appleTeamId": "CSMUJR4H57"
+      }
+    },
+    "store": {
       "ios": {
         "ascAppId": "6815600896",
         "appleTeamId": "CSMUJR4H57"

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Destek - Otova</title>
+<meta name="description" content="Otova destek ve sık sorulan sorular.">
+<meta name="color-scheme" content="dark">
+<meta name="referrer" content="no-referrer">
+<style>
+:root{--bg:#0c0b0a;--card:#181614;--line:#27231f;--text:#f0ede8;--muted:#a8a29e;--amber:#fbbf24;--link:#60a5fa}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:720px;margin:0 auto;padding:0 16px}
+header{border-bottom:1px solid var(--line)}
+.top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:18px 0}
+.brand{display:flex;align-items:center;gap:8px;color:var(--text);text-decoration:none;font-weight:700;font-size:20px;letter-spacing:-.01em}
+.brand svg{width:30px;height:30px;display:block}
+nav{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:15px}
+nav a{color:var(--muted);text-decoration:none;padding:4px 0}
+nav a:hover,nav a[aria-current=page]{color:var(--text)}
+nav a[aria-current=page]{border-bottom:2px solid var(--amber)}
+main{padding:32px 0 48px}
+h1{font-size:30px;line-height:1.2;letter-spacing:-.02em;margin:0 0 8px}
+h2{font-size:21px;line-height:1.3;margin:36px 0 10px}
+h3{font-size:17px;margin:24px 0 6px}
+p,ul,ol{margin:0 0 14px}
+ul,ol{padding-left:22px}
+li{margin:4px 0}
+a{color:var(--link)}
+strong{color:var(--text)}
+.muted{color:var(--muted)}
+.lead{font-size:18px;color:var(--muted);margin-bottom:24px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:0 0 14px}
+.card h3{margin-top:0}
+.card p:last-child,.card ul:last-child{margin-bottom:0}
+.warn{border-left:3px solid var(--amber)}
+.grid{display:grid;grid-template-columns:1fr;gap:12px}
+@media(min-width:600px){.grid{grid-template-columns:1fr 1fr}}
+.grid .card{margin:0}
+code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.92em;color:var(--amber);background:#211e1b;padding:1px 5px;border-radius:4px}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+details{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:0 0 10px}
+summary{cursor:pointer;font-weight:600}
+details[open] summary{margin-bottom:8px}
+.links{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}
+.btn{display:inline-block;border:1px solid var(--line);background:var(--card);color:var(--text);text-decoration:none;padding:10px 14px;border-radius:10px;font-weight:600}
+.btn:hover{border-color:var(--amber)}
+footer{border-top:1px solid var(--line);padding:20px 0 32px;font-size:14px;color:var(--muted)}
+footer p{margin:4px 0}
+</style>
+</head>
+<body>
+<header><div class="wrap top">
+<a class="brand" href="index.html" aria-label="Otova ana sayfa"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M17 18L33 32L17 46" fill="none" stroke="#f0ede8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><rect x="37" y="40" width="12" height="6" rx="1.5" fill="#fbbf24"/></svg><span>Otova</span></a>
+<nav aria-label="Site"><a href="index.html">Ana sayfa</a><a href="gizlilik.html">Gizlilik</a><a href="kosullar.html">Koşullar</a><a href="destek.html" aria-current="page">Destek</a></nav>
+</div></header>
+<main class="wrap">
+
+<h1>Destek</h1>
+<p class="lead">Sık sorulan sorular. Cevabını bulamazsan bize yaz: <!-- TODO: destek@ORNEK yerine gercek destek e-posta adresini yaz --><a href="mailto:destek@ORNEK">destek@ORNEK</a></p>
+
+<h2>Adaptör ve bağlantı</h2>
+<details><summary>Hangi OBD-II adaptörler çalışır?</summary><p>ELM327 uyumlu <strong>Wi-Fi</strong> adaptörler ve <strong>Bluetooth LE (BLE)</strong> adaptörler çalışır. Klasik Bluetooth (BLE olmayan) adaptörler iPhone ile çalışmaz; satın almadan önce adaptörün Wi-Fi veya Bluetooth LE / BLE olduğundan emin ol.</p><p>OBD-II genellikle 2001 sonrası benzinli ve 2004 sonrası dizel araçların çoğunda bulunur. Yine de her araç ve her adaptörle uyum garanti edilmez.</p></details>
+<details><summary>Wi-Fi adaptöre nasıl bağlanırım?</summary><ol><li>Adaptörü aracın OBD-II soketine tak.</li><li>Kontağı aç (gerekirse motoru çalıştır).</li><li>iPhone'da <strong>Ayarlar &gt; Wi-Fi</strong> bölümünden adaptörün yayınladığı Wi-Fi ağına katıl.</li><li>Otova'yı aç ve <strong>Yerel Ağ</strong> izni sorulduğunda izin ver.</li><li>Varsayılan adres <code>192.168.0.10</code>, port <code>35000</code>'dir. Adaptörün farklıysa <strong>Daha fazla &gt; Bağlantı ayarları</strong> bölümünden değiştir.</li></ol><p>Yerel Ağ iznini daha önce reddettiysen <strong>Ayarlar &gt; Otova</strong> bölümünden açabilirsin.</p></details>
+<details><summary>Bluetooth LE adaptöre nasıl bağlanırım?</summary><p>Adaptörü tak, kontağı aç ve Otova'daki bağlantı ekranından bağlan. Otova <strong>Bluetooth</strong> izni ister; bu izin yalnızca adaptörle konuşmak için kullanılır. İzni reddettiysen <strong>Ayarlar &gt; Otova</strong> bölümünden açabilirsin.</p></details>
+<details><summary>iPhone "İnternet yok" uyarısı veriyor. Sorun mu var?</summary><p>Hayır, bu normal. Wi-Fi adaptörün kendi ağının internet bağlantısı yoktur; iPhone bu yüzden uyarı gösterir. Otova adaptörle internet olmadan çalışır.</p></details>
+<details><summary>Aracım cevap vermiyor.</summary><ul><li>Kontağın açık olduğundan emin ol.</li><li>Adaptörün sokete tam oturduğunu ve ışığının yandığını kontrol et.</li><li>Wi-Fi adaptörde iPhone'un hâlâ adaptörün ağına bağlı olduğunu kontrol et.</li><li>Yavaş cevap veren araçlar için <strong>Daha fazla &gt; Bağlantı ayarları &gt; Yavaş ECU modu</strong>'nu açıp tekrar dene.</li><li>Aracın OBD-II desteklemiyor olabilir.</li></ul></details>
+<details><summary>Adaptörüm yok, uygulamayı deneyebilir miyim?</summary><p>Evet, demo modu ile. Demo modu simüle edilmiş bir araçla hata kodlarını, freeze frame'i, canlı verileri ve araç bilgisini gösterir. Gösterilen veriler gerçek değildir. Açmak için:</p><ul><li><strong>Tanı</strong> sekmesinde "Bağlan" &gt; "Dongle'ım yok, demo ile dene"</li><li><strong>Canlı</strong> sekmesinde "Demo modunu dene"</li><li><strong>Daha fazla &gt; Bağlantı ayarları &gt; Demo modu</strong></li></ul><p>Bakım planı, servis geçmişi ve belge tarihleri adaptör olmadan da tam olarak çalışır.</p></details>
+
+<h2>Otova Pro ve satın alma</h2>
+<details><summary>Pro satın alamıyorum.</summary><p>Satın alma için internet bağlantısı gerekir. Wi-Fi adaptörün ağının interneti yoktur; satın almadan önce iPhone'u adaptörün Wi-Fi ağından çıkar (veya mobil veriyi kullan), sonra tekrar dene.</p></details>
+<details><summary>Satın alımımı nasıl geri yüklerim?</summary><p>Pro ekranında <strong>"Satın alımları geri yükle"</strong> düğmesine dokun. Satın alımı yaptığın Apple Hesabıyla giriş yapmış olman ve internete bağlı olman gerekir.</p></details>
+<details><summary>Yıllık aboneliği nasıl iptal ederim?</summary><p>iPhone'da <strong>Ayarlar &gt; Apple Hesabı (adın) &gt; Abonelikler</strong> bölümünden Otova'yı seç ve iptal et. Abonelik, dönem bitiminden en az 24 saat önce iptal edilmezse otomatik yenilenir. İptal, mevcut dönemin sonunda geçerli olur.</p></details>
+<details><summary>İade alabilir miyim?</summary><p>Ödemeler ve iadeler Apple tarafından işlenir. İade talebini <a href="https://reportaproblem.apple.com">reportaproblem.apple.com</a> üzerinden yapabilirsin.</p></details>
+
+<h2>Veriler</h2>
+<details><summary>Verilerim nerede? Yedekleniyor mu?</summary><p>Tüm verilerin (araçlar, bakım kayıtları, tarihler, ayarlar) yalnızca bu iPhone'da tutulur. Otova'nın hesabı veya sunucusu yoktur, verileri buluta göndermez. Uygulamayı silersen veriler de silinir. Ayrıntılar için <a href="gizlilik.html">Gizlilik Politikası</a>'na bak.</p></details>
+<details><summary>Hata kodlarını silmeli miyim?</summary><p>Hata kodlarını silmek arızayı çözmez, sadece lambayı söndürür. Altta yatan sorun sürerse kod tekrar gelir. Ayrıca hazırlık monitörleri sıfırlanabilir ve araç sürüş döngüleri tamamlanana kadar muayeneden geçemeyebilir. Emin değilsen bir servise danış.</p></details>
+
+<h2>İletişim</h2>
+<p><!-- TODO: destek@ORNEK yerine gercek destek e-posta adresini yaz --><a href="mailto:destek@ORNEK">destek@ORNEK</a></p>
+
+<hr>
+
+<section lang="en">
+<h2>Support (English summary)</h2>
+<ul>
+<li><strong>Adapters:</strong> ELM327-compatible Wi-Fi and Bluetooth LE (BLE) adapters work. Classic (non-BLE) Bluetooth adapters do not work on iPhone.</li>
+<li><strong>Wi-Fi setup:</strong> plug in the adapter, turn the ignition on, join the adapter's Wi-Fi in iOS Settings, allow the Local Network permission in Otova. Default address <code>192.168.0.10</code>, port <code>35000</code> (change it in Daha fazla &gt; Bağlantı ayarları).</li>
+<li>The iOS "No Internet Connection" warning on the adapter's Wi-Fi is normal.</li>
+<li><strong>Buying Pro</strong> needs internet: leave the adapter's Wi-Fi first. Use "Satın alımları geri yükle" to restore purchases. Cancel the yearly subscription in iOS Settings &gt; Apple Account &gt; Subscriptions. Refunds are handled by Apple at <a href="https://reportaproblem.apple.com">reportaproblem.apple.com</a>.</li>
+<li><strong>No adapter?</strong> Try demo mode (simulated data, not real).</li>
+<li><strong>Car not responding:</strong> check the ignition, then try "Yavaş ECU modu" (slow ECU mode) in Bağlantı ayarları.</li>
+<li><strong>Data:</strong> stored only on this iPhone; deleting the app deletes it.</li>
+<li><strong>Contact:</strong> <!-- TODO: destek@ORNEK yerine gercek destek e-posta adresini yaz --><a href="mailto:destek@ORNEK">destek@ORNEK</a></li>
+</ul>
+</section>
+
+</main>
+<footer><div class="wrap">
+<p>Otova, bağımsız bir geliştirici tarafından geliştirilen bir iOS uygulamasıdır. Herhangi bir araç üreticisiyle bağlantılı değildir.</p>
+<p>İletişim: <!-- TODO: destek@ORNEK yerine gercek destek e-posta adresini yaz --><a href="mailto:destek@ORNEK">destek@ORNEK</a></p>
+<p>Son güncelleme: 11 Ekim 2026</p>
+</div></footer>
+</body>
+</html>

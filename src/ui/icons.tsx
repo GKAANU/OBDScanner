@@ -18,6 +18,7 @@ export const ICON = {
   lock: 'M7 11h10a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2zM8 11V8a4 4 0 0 1 8 0v3',
   trash: 'M4.5 7h15M10 11v6M14 11v6M6.5 7l.8 11.2A2 2 0 0 0 9.3 20h5.4a2 2 0 0 0 2-1.8L17.5 7M9.5 7V5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2',
   arrowUp: 'M12 19V5M6 11l6-6 6 6',
+  share: 'M12 3.5v11M8 7.5l4-4 4 4M5.5 12.5v6a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-6',
   plus: 'M12 5v14M5 12h14',
   // "Daha fazla" rows
   idCard: 'M4 6.5h16v11H4zM8 10.5h5M8 13.5h8',

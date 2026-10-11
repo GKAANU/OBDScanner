@@ -4,11 +4,12 @@ import { router, useFocusEffect } from 'expo-router';
 import { useOBD } from '../../src/obd/context';
 import { useScan, type ScanResult } from '../../src/obd/useScan';
 import { useGarage } from '../../src/garage/store';
-import { usePro, useProGate, type ProFeature } from '../../src/pro/entitlement';
+import { usePro, useProGate } from '../../src/pro/entitlement';
 import { userMessage } from '../../src/obd/protocol';
-import { parseClearResponse } from '../../src/obd/parsers';
+import { clearAndVerify } from '../../src/obd/clear';
+import { setDtcRescan, setDtcSession } from '../../src/obd/dtc-session';
 import { inspectionVerdict, type Monitor } from '../../src/obd/health';
-import { dtcDetail, URGENCY_LABEL, URGENCY_TONE, type DtcDetail } from '../../src/obd/dtc-details';
+import { dtcDetail, URGENCY_LABEL, URGENCY_TONE } from '../../src/obd/dtc-details';
 import type { FreezeFrame } from '../../src/obd/client';
 import { Copyable, useCopy } from '../../src/ui/copy';
 import { useToast } from '../../src/ui/toast';
@@ -22,7 +23,6 @@ import {
   Ring,
   Screen,
   ScreenTitle,
-  Sheet,
 } from '../../src/ui/primitives';
 import { colors, fonts, tabular, tone } from '../../src/ui/theme';
 import { formatFullReport, formatThousands, formatTimestamp, formatValue } from '../../src/utils/format';
@@ -72,8 +72,6 @@ export default function TaniScreen() {
   const connected = state === 'ready';
 
   const [showSaved, setShowSaved] = useState(false);
-  const [detail, setDetail] = useState<{ code: string; groups: string[] } | null>(null);
-  const [techOpen, setTechOpen] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
@@ -116,6 +114,19 @@ export default function TaniScreen() {
 
   const showResults = !!view && !scanning;
 
+  // The code detail route reads Tanı's current view and can ask for a rescan.
+  useEffect(() => {
+    setDtcSession(
+      view
+        ? { at: view.at, stored: view.stored, pending: view.pending, permanent: view.permanent, freezeFrame: view.freezeFrame, live: view.live }
+        : null
+    );
+  }, [view]);
+  useEffect(() => {
+    setDtcRescan(scan);
+    return () => setDtcRescan(null);
+  }, [scan]);
+
   const sub = scanning
     ? 'Taranıyor…'
     : view
@@ -136,11 +147,6 @@ export default function TaniScreen() {
   const permanentCount = view ? view.permanent.length : 0;
   const milOn = view ? (view.milOn ?? view.stored.length > 0) : false;
   const verdict = view ? inspectionVerdict({ milOn, monitors: view.monitors, battery }) : null;
-
-  const groupsOf = useCallback(
-    (code: string): string[] => (view ? GROUPS.filter((g) => view[g.key].includes(code)).map((g) => g.name) : []),
-    [view]
-  );
 
   const resultsText = useMemo(() => {
     if (!view) return '';
@@ -206,33 +212,29 @@ export default function TaniScreen() {
     setActionError(null);
     const before = result ? [...result.stored, ...result.pending] : [];
     try {
-      const raw = await client.clearDTCs();
-      const outcome = parseClearResponse(raw);
-      const rawLine = raw.trim().replace(/\s+/g, ' ') || 'boş';
+      const r = await clearAndVerify(client, before);
       setConfirm(false);
-      if (outcome === 'engine-running') {
-        setActionError('Araç, motor çalışırken kodların silinmesine izin vermedi. Motoru kapat, kontağı açık bırak ve tekrar dene.');
+      if (r.kind === 'engine-running') {
+        setActionError(`Araç, motor çalışırken kodların silinmesine izin vermedi. Motoru kapat, kontağı açık bırak ve tekrar dene. (Araç yanıtı: ${r.raw})`);
         return;
       }
-      if (outcome !== 'ok') {
+      if (r.kind !== 'ok') {
         setActionError(
-          outcome === 'refused'
-            ? `Araç silme isteğini reddetti. Motor kapalı, kontak açıkken tekrar dene. (Araç yanıtı: ${rawLine})`
-            : `Araçtan silme onayı gelmedi. Motor kapalı, kontak açıkken tekrar dene. (Araç yanıtı: ${rawLine})`
+          r.kind === 'refused'
+            ? `Araç silme isteğini reddetti. Motor kapalı, kontak açıkken tekrar dene. (Araç yanıtı: ${r.raw})`
+            : `Araçtan silme onayı gelmedi. Motor kapalı, kontak açıkken tekrar dene. (Araç yanıtı: ${r.raw})`
         );
         return;
       }
       toast('Kodlar silindi', 'Kontrol için yeniden taranıyor', 2200);
-      const after = await scan();
-      const back = after ? before.filter((c) => after.stored.includes(c) || after.pending.includes(c)) : [];
-      const permanent = after ? after.permanent : [];
+      await scan();
       const notes: string[] = [];
-      if (back.length) {
-        notes.push(`${back.join(', ')} silindikten hemen sonra geri geldi. Arıza şu an aktif; sebebi giderilmeden kod tekrar oluşur.`);
+      if (r.back.length) {
+        notes.push(`${r.back.join(', ')} silindikten hemen sonra geri geldi. Arıza şu an aktif; sebebi giderilmeden kod tekrar oluşur.`);
       }
-      if (permanent.length) {
+      if (r.permanent.length) {
         notes.push(
-          `${permanent.join(', ')} kalıcı kod. Kalıcı kodlar hiçbir cihazla silinemez; arıza giderildikten sonra araç birkaç sürüşte kendi siler.`
+          `${r.permanent.join(', ')} kalıcı kod. Kalıcı kodlar hiçbir cihazla silinemez; arıza giderildikten sonra araç birkaç sürüşte kendi siler.`
         );
       }
       if (notes.length) setActionError(notes.join('\n\n'));
@@ -244,18 +246,9 @@ export default function TaniScreen() {
     }
   }, [client, toast, scan, result]);
 
-  const d: DtcDetail | null = detail ? dtcDetail(detail.code) : null;
-
   /** The one code a free user can open in full (stored -> pending -> permanent order). */
   const freeCode = view ? ([...view.stored, ...view.pending, ...view.permanent][0] ?? null) : null;
 
-  const gateFromSheet = useCallback(
-    (feature: ProFeature) => {
-      setDetail(null);
-      setTimeout(() => gate(feature), 350);
-    },
-    [gate]
-  );
 
   return (
     <Screen
@@ -386,14 +379,7 @@ export default function TaniScreen() {
                       groupName={g.name}
                       freezeFrame={isPro ? view.freezeFrame : null}
                       locked={!isPro && code !== freeCode}
-                      onOpen={() => {
-                        if (!isPro && code !== freeCode) {
-                          gate('dtc-detail');
-                          return;
-                        }
-                        setTechOpen(false);
-                        setDetail({ code, groups: groupsOf(code) });
-                      }}
+                      onOpen={() => router.push({ pathname: '/kod/[code]', params: { code } })}
                     />
                   ))
                 )}
@@ -415,22 +401,6 @@ export default function TaniScreen() {
         </>
       ) : null}
 
-      <Sheet visible={!!detail} onClose={() => setDetail(null)}>
-        {d && detail ? (
-          <DtcDetailBody
-            d={d}
-            groups={detail.groups}
-            freezeFrame={view?.freezeFrame ?? null}
-            live={!!view?.live}
-            isPro={isPro}
-            onLocked={gateFromSheet}
-            protocol={protocolName}
-            techOpen={techOpen}
-            onToggleTech={() => setTechOpen((o) => !o)}
-            onCopy={(text) => void copy(text)}
-          />
-        ) : null}
-      </Sheet>
 
       <ConfirmModal
         visible={confirm}
@@ -598,145 +568,6 @@ function DtcCard({
   );
 }
 
-function DtcDetailBody({
-  d,
-  groups,
-  freezeFrame,
-  live,
-  protocol,
-  techOpen,
-  onToggleTech,
-  onCopy,
-  isPro,
-  onLocked,
-}: {
-  d: DtcDetail;
-  groups: string[];
-  freezeFrame: FreezeFrame | null;
-  live: boolean;
-  isPro: boolean;
-  onLocked: (f: ProFeature) => void;
-  protocol: string | null;
-  techOpen: boolean;
-  onToggleTech: () => void;
-  onCopy: (text: string) => void;
-}) {
-  const [fg, bg] = tone[URGENCY_TONE[d.urgency]];
-  const ffMatches = isPro && !!freezeFrame && freezeFrame.dtc === d.code && freezeFrame.values.length > 0;
-  const modes = GROUPS.filter((g) => groups.includes(g.name)).map((g) => `${g.mode} (${g.name})`);
-  const tech = [
-    `Kod: ${d.code}`,
-    `Okuma: ${modes.join(', ') || '—'}`,
-    freezeFrame
-      ? freezeFrame.dtc
-        ? `Freeze frame: Mode 02, çerçeve ${freezeFrame.frame}, kaydeden kod ${freezeFrame.dtc}`
-        : 'Freeze frame: ECU’da kayıtlı anlık görüntü yok'
-      : 'Freeze frame: okunmadı',
-    protocol ? `Protokol: ${protocol}` : null,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  const fullText = [
-    `${d.code} — ${d.title}`,
-    d.long,
-    `Sürmeye devam: ${d.drive}`,
-    ffMatches && freezeFrame ? `Freeze frame: ${ffText(freezeFrame)}` : null,
-    d.causes.length ? `Olası nedenler: ${d.causes.join('; ')}` : null,
-    tech,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  let ffNote: string | null = null;
-  if (!ffMatches) {
-    if (!live) ffNote = 'Kod anındaki değerler için aracı bağlayıp yeniden tara.';
-    else if (!freezeFrame || !freezeFrame.dtc) ffNote = 'ECU’da kayıtlı anlık görüntü yok.';
-    else if (freezeFrame.dtc !== d.code)
-      ffNote = `ECU’daki anlık görüntü ${freezeFrame.dtc} koduyla kaydedilmiş, bu koda ait değil. Araç yalnızca lambayı ilk yakan kodun anını saklar.`;
-    else ffNote = 'Anlık görüntüde okunabilir değer yok.';
-  }
-
-  return (
-    <>
-      <View style={s.dtcHead}>
-        <Text style={[s.dtcCode, { fontSize: 14 }]}>{d.code}</Text>
-        <View style={[s.urg, { backgroundColor: bg }]}>
-          <Text style={[s.urgText, { color: fg, fontSize: 12 }]}>{URGENCY_LABEL[d.urgency]}</Text>
-        </View>
-        <Text style={s.detailGroups}>{groups.join(' · ')}</Text>
-      </View>
-      <Text style={s.detailTitle}>{d.title}</Text>
-      <Text style={s.detailLong}>{d.long}</Text>
-      <View style={[s.driveBox, { backgroundColor: bg }]}>
-        <Text style={[s.driveTitle, { color: fg }]}>Sürmeye devam edebilir miyim?</Text>
-        <Text style={s.driveText}>{d.drive}</Text>
-      </View>
-
-      <Text style={s.detailSection}>Kod oluştuğu andaki değerler</Text>
-      <Text style={s.detailSectionSub}>Freeze frame · araç bu anı saklar</Text>
-      {!isPro ? (
-        <Pressable onPress={() => onLocked('freeze-frame')} style={[s.lockedRow, { marginTop: 0 }]}>
-          <Text style={s.lockedText}>Kod anındaki değerler</Text>
-          <ProTag />
-        </Pressable>
-      ) : ffMatches && freezeFrame ? (
-        <View style={s.ffGrid}>
-          {freezeFrame.values.map(({ def, value }) => {
-            const v = formatValue(value);
-            return (
-              <Copyable
-                key={def.id}
-                text={`${def.label}: ${formatValue(value, def.unit)} (${d.code} anı)`}
-                style={s.ffTile}
-                restColor="#1f1c19"
-              >
-                <Text style={s.ffLabel} numberOfLines={1}>
-                  {def.label}
-                </Text>
-                <View style={s.ffValRow}>
-                  <Text style={[s.ffVal, tabular]}>{v}</Text>
-                  <Text style={s.ffUnit}>{def.unit}</Text>
-                </View>
-              </Copyable>
-            );
-          })}
-        </View>
-      ) : (
-        <Text style={s.ffNote}>{ffNote}</Text>
-      )}
-
-      {d.causes.length ? (
-        <>
-          <Text style={[s.detailSection, { marginBottom: 10 }]}>Olası nedenler</Text>
-          <View style={{ gap: 8 }}>
-            {d.causes.map((c, i) => (
-              <View key={c} style={s.cause}>
-                <Text style={[s.causeN, tabular]}>{i + 1}</Text>
-                <Text style={s.causeText}>{c}</Text>
-              </View>
-            ))}
-          </View>
-        </>
-      ) : null}
-
-      <Pressable onPress={onToggleTech} style={s.techHead}>
-        <Text style={s.techTitle}>Teknik ayrıntılar</Text>
-        <View style={{ transform: [{ rotate: techOpen ? '180deg' : '0deg' }] }}>
-          <Icon name="chevronDown" size={14} color={colors.faint} stroke={2.2} />
-        </View>
-      </Pressable>
-      {techOpen ? (
-        <View style={s.techBox}>
-          <Text style={s.techText}>{tech}</Text>
-        </View>
-      ) : null}
-
-      <Button label="Kopyala" onPress={() => onCopy(fullText)} style={{ marginTop: 18, height: 50 }} />
-    </>
-  );
-}
-
 const s = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
   link: { color: colors.blue, fontFamily: fonts.bodyMedium, fontSize: 14 },
@@ -850,45 +681,6 @@ const s = StyleSheet.create({
     borderTopColor: colors.line,
   },
   dtcDriveText: { flex: 1, color: colors.text2, fontFamily: fonts.body, fontSize: 13, lineHeight: 19 },
-  detailGroups: { marginLeft: 'auto', color: colors.muted, fontFamily: fonts.body, fontSize: 12 },
-  detailTitle: { color: colors.text, fontFamily: fonts.bodyBold, fontSize: 24, lineHeight: 29, letterSpacing: -0.6, marginTop: 10 },
-  detailLong: { color: colors.muted, fontFamily: fonts.body, fontSize: 14, lineHeight: 21, marginTop: 6 },
-  driveBox: { marginTop: 16, borderRadius: 16, padding: 14 },
-  driveTitle: { fontFamily: fonts.bodySemiBold, fontSize: 14 },
-  driveText: { color: '#e7e5e4', fontFamily: fonts.body, fontSize: 14, lineHeight: 21, marginTop: 4 },
-  detailSection: { color: colors.text, fontFamily: fonts.bodySemiBold, fontSize: 15, marginTop: 20, marginBottom: 4 },
-  detailSectionSub: { color: colors.muted, fontFamily: fonts.body, fontSize: 12.5, marginBottom: 10 },
-  ffGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  ffTile: { width: '48.5%', borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12 },
-  ffLabel: { color: colors.muted, fontFamily: fonts.body, fontSize: 12 },
-  ffValRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4, marginTop: 4 },
-  ffVal: { color: colors.amber, fontFamily: fonts.bodySemiBold, fontSize: 19 },
-  ffUnit: { color: colors.muted, fontFamily: fonts.bodyMedium, fontSize: 12 },
-  ffNote: {
-    color: colors.muted,
-    fontFamily: fonts.body,
-    fontSize: 13,
-    lineHeight: 19,
-    backgroundColor: '#1f1c19',
-    borderRadius: 14,
-    padding: 12,
-  },
-  cause: { flexDirection: 'row', gap: 10 },
-  causeN: { color: colors.faint, fontFamily: fonts.body, fontSize: 14, width: 14 },
-  causeText: { flex: 1, color: colors.text2, fontFamily: fonts.body, fontSize: 14, lineHeight: 20 },
-  techHead: {
-    marginTop: 18,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    backgroundColor: '#1f1c19',
-    borderRadius: 14,
-  },
-  techTitle: { color: colors.muted, fontFamily: fonts.bodyMedium, fontSize: 14 },
-  techBox: { marginTop: 6, padding: 12, paddingHorizontal: 14, backgroundColor: colors.inset, borderRadius: 14 },
-  techText: { color: colors.text2, fontFamily: fonts.mono, fontSize: 12, lineHeight: 20 },
   lockedRow: {
     marginTop: 12,
     flexDirection: 'row',

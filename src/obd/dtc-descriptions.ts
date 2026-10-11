@@ -157,11 +157,17 @@ const FAMILY: Record<string, string> = {
 };
 
 /** True when the code's second char marks it manufacturer-specific. */
-function isManufacturerSpecific(code: string): boolean {
+export function isManufacturerSpecific(code: string): boolean {
   const fam = code[0];
   const d2 = code[1];
   if (fam === 'P') return d2 === '1' || d2 === '3';
   return d2 === '1' || d2 === '2';
+}
+
+/** Subsystem name for a code ("Ateşleme sistemi veya tekleme"). */
+export function dtcSubsystem(code: string): string {
+  const c = code.toUpperCase();
+  return c[0] === 'P' ? P_SUBSYSTEM[c[2]] ?? FAMILY.P : FAMILY[c[0]] ?? 'Bilinmeyen sistem';
 }
 
 /** Exact description for a known generic code, else null. */

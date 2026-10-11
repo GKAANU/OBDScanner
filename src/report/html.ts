@@ -56,11 +56,11 @@ function vehicleLine(v: Vehicle): string {
   return parts.filter(Boolean).join(' · ');
 }
 
-function page(title: string, v: Vehicle, body: string, now: Date): string {
+function page(title: string, v: Vehicle | null, body: string, now: Date): string {
   return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${e(title)}</title><style>${CSS}</style></head><body>
 <header><div class="brand">${LOGO_SVG}<span>otova</span></div><div class="meta">${e(formatTimestamp(now))}</div></header>
 <h1>${e(title)}</h1>
-<p class="sub">${e(v.name)}${v.plate ? ` · ${e(v.plate)}` : ''} · ${e(vehicleLine(v))}</p>
+${v ? `<p class="sub">${e(v.name)}${v.plate ? ` · ${e(v.plate)}` : ''} · ${e(vehicleLine(v))}</p>` : ''}
 ${body}
 <footer>Otova ile oluşturuldu · Otova raporu cihazda üretir, internete gönderilmez. Bilgiler genel rehberdir; kesin karar için servise danış.</footer>
 </body></html>`;
@@ -160,4 +160,34 @@ export function garageReportHtml(
         .join('')}</tbody></table>`
     : '';
   return page('Araç raporu', vehicle, scanBlock(scan) + planTable(planRows) + dates + historyTable(records), now);
+}
+
+export type DtcReport = {
+  code: string;
+  title: string;
+  status: string;
+  urgency: { label: string; tone: string };
+  readAt: string;
+  answer: string;
+  drive: string;
+  meaning: string;
+  freezeFrame: Array<{ label: string; value: string }>;
+  causes: string[];
+  steps: string[];
+};
+
+/** "Ustaya göster": one fault code, everything a mechanic needs on one page. */
+export function dtcReportHtml(vehicle: Vehicle | null, r: DtcReport, now = new Date()): string {
+  const list = (items: string[]) => `<ol>${items.map((x) => `<li>${e(x)}</li>`).join('')}</ol>`;
+  const ff = r.freezeFrame.length
+    ? `<h2>Kod donduğunda araç</h2><table><tbody>${r.freezeFrame.map((f) => `<tr><td>${e(f.label)}</td><td class="num">${e(f.value)}</td></tr>`).join('')}</tbody></table>`
+    : '';
+  const body = `<p><span class="mono" style="font-size:16pt;font-weight:600">${e(r.code)}</span> &nbsp;<span class="chip ${toneClass(r.urgency.tone)}">${e(r.urgency.label)}</span> <span class="chip neutral">${e(r.status)}</span></p>
+<p class="sub">Okundu: ${e(r.readAt)}</p>
+<div class="box"><strong>Sürmeye devam: ${e(r.answer)}</strong> ${e(r.drive)}</div>
+<h2>Ne demek?</h2><p>${e(r.meaning)}</p>
+${ff}
+${r.causes.length ? `<h2>Olası nedenler</h2>${list(r.causes)}` : ''}
+<h2>Yapılacaklar</h2>${list(r.steps)}`;
+  return page(`${r.code} · ${r.title}`, vehicle, body, now);
 }

@@ -21,7 +21,8 @@
       },
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Otova, OBD-II adaptörünüze yerel ağ üzerinden bağlanır. Hiçbir veri internete gönderilmez.",
-        "NSBluetoothAlwaysUsageDescription": "Otova, Bluetooth OBD-II adaptörünüze bağlanmak için Bluetooth kullanır. Hiçbir veri internete gönderilmez."
+        "NSBluetoothAlwaysUsageDescription": "Otova, Bluetooth OBD-II adaptörünüze bağlanmak için Bluetooth kullanır. Hiçbir veri internete gönderilmez.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "privacyManifests": {
         "NSPrivacyTracking": false,

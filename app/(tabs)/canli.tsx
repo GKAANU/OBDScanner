@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import { BlurView } from 'expo-blur';
+import { Icon } from '../../src/ui/icons';
 import { useOBD } from '../../src/obd/context';
 import { usePro, useProGate } from '../../src/pro/entitlement';
 import { PID_BY_ID, PID_REGISTRY, type PIDDef, type PIDGroup } from '../../src/obd/pid-registry';
@@ -246,15 +248,7 @@ export default function CanliScreen() {
             })}
           </Card>
 
-          {!isPro ? (
-            <Card hero style={s.offCard}>
-              <Text style={s.offTitle}>Tüm sensörler, grafikler ve HEX Pro'da</Text>
-              <Text style={s.offBody}>
-                Yakıt düzeltme, hava akışı, oksijen sensörü, manifold basıncı ve daha fazlası; her biri küçük grafik ve min/max ile.
-              </Text>
-              <Button label="Pro'ya geç" onPress={() => gate('live-all')} style={s.offBtn} />
-            </Card>
-          ) : null}
+          {!isPro ? <LockedSensors onUpgrade={() => gate('live-all')} /> : null}
 
           <View style={s.grid}>
             {sensorIds.map((id) => {
@@ -358,6 +352,57 @@ export default function CanliScreen() {
   );
 }
 
+/** Sample cards shown behind the blur for free users (made-up values, nothing is polled). */
+const TEASER: Array<{ id: string; value: string; hist: number[] }> = [
+  { id: 'STFT1', value: '-1,6', hist: [2, 1, 3, 0, -1, 1, -2, -1, 0, -2, -1, -1.6] },
+  { id: 'LTFT1', value: '3,1', hist: [3, 3.1, 2.9, 3, 3.2, 3.1, 3, 3.1, 3.2, 3, 3.1, 3.1] },
+  { id: 'MAF', value: '4,8', hist: [4, 4.2, 6, 9, 7, 5, 4.6, 4.9, 8, 6, 5, 4.8] },
+  { id: 'MAP', value: '34', hist: [30, 32, 45, 60, 52, 40, 35, 33, 48, 41, 36, 34] },
+  { id: 'CMV', value: '14,2', hist: [14.1, 14.2, 14.2, 14.1, 14.3, 14.2, 14.2, 14.1, 14.2, 14.2, 14.3, 14.2] },
+  { id: 'OILT', value: '92', hist: [70, 74, 78, 81, 84, 86, 88, 89, 90, 91, 92, 92] },
+];
+
+/** Free plan: the sensor grid is visible but blurred, with an upgrade prompt on top. */
+function LockedSensors({ onUpgrade }: { onUpgrade: () => void }) {
+  return (
+    <View style={s.locked}>
+      <View style={s.grid} pointerEvents="none">
+        {TEASER.filter((t) => PID_BY_ID[t.id]).map((t) => {
+          const def = PID_BY_ID[t.id];
+          return (
+            <View key={t.id} style={[s.sensor, { backgroundColor: colors.card }]}>
+              <View style={s.sensorHead}>
+                <Text style={s.sensorLabel} numberOfLines={1}>
+                  {def.label}
+                </Text>
+                <Text style={[s.hex, { color: colors.faint }]}>HEX</Text>
+              </View>
+              <View style={s.valRow}>
+                <Text style={[s.sensorVal, tabular]}>{t.value}</Text>
+                <Text style={s.sensorUnit}>{def.unit}</Text>
+              </View>
+              <View style={{ marginTop: 8 }}>
+                <Sparkline values={t.hist} />
+              </View>
+            </View>
+          );
+        })}
+      </View>
+      <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
+      <View style={s.lockOverlay}>
+        <View style={s.lockBadge}>
+          <Icon name="lock" size={20} color={colors.amber} />
+        </View>
+        <Text style={s.offTitle}>Tüm sensörler Pro'da</Text>
+        <Text style={s.offBody}>
+          Yakıt karışımı, hava akışı, şarj voltajı, yağ sıcaklığı ve 25'ten fazla sensör; her biri grafik, min/max ve HEX ile.
+        </Text>
+        <Button label="Pro'ya geç" onPress={onUpgrade} style={s.offBtn} />
+      </View>
+    </View>
+  );
+}
+
 function blank(): RowState {
   return { value: null, raw: null, min: null, max: null, hist: [] };
 }
@@ -379,6 +424,25 @@ const s = StyleSheet.create({
   gaugeVal: { color: colors.text, fontFamily: fonts.bodySemiBold, fontSize: 22, letterSpacing: -0.6 },
   gaugeUnit: { color: colors.muted, fontFamily: fonts.bodyMedium, fontSize: 11, marginTop: 2 },
   gaugeLabel: { color: colors.muted, fontFamily: fonts.bodyMedium, fontSize: 12.5 },
+  locked: { marginTop: 0, borderRadius: 20, overflow: 'hidden' },
+  lockOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    backgroundColor: 'rgba(12,11,10,0.35)',
+  },
+  lockBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.line,
+    marginBottom: 12,
+  },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   sensor: {
     width: '48.8%',

@@ -206,7 +206,9 @@ export default function TaniScreen() {
     setActionError(null);
     const before = result ? [...result.stored, ...result.pending] : [];
     try {
-      const outcome = parseClearResponse(await client.clearDTCs());
+      const raw = await client.clearDTCs();
+      const outcome = parseClearResponse(raw);
+      const rawLine = raw.trim().replace(/\s+/g, ' ') || 'boş';
       setConfirm(false);
       if (outcome === 'engine-running') {
         setActionError('Araç, motor çalışırken kodların silinmesine izin vermedi. Motoru kapat, kontağı açık bırak ve tekrar dene.');
@@ -215,19 +217,25 @@ export default function TaniScreen() {
       if (outcome !== 'ok') {
         setActionError(
           outcome === 'refused'
-            ? 'Araç silme isteğini reddetti. Motor kapalı, kontak açıkken tekrar dene.'
-            : 'Araçtan silme onayı gelmedi. Motor kapalı, kontak açıkken tekrar dene.'
+            ? `Araç silme isteğini reddetti. Motor kapalı, kontak açıkken tekrar dene. (Araç yanıtı: ${rawLine})`
+            : `Araçtan silme onayı gelmedi. Motor kapalı, kontak açıkken tekrar dene. (Araç yanıtı: ${rawLine})`
         );
         return;
       }
       toast('Kodlar silindi', 'Kontrol için yeniden taranıyor', 2200);
       const after = await scan();
       const back = after ? before.filter((c) => after.stored.includes(c) || after.pending.includes(c)) : [];
+      const permanent = after ? after.permanent : [];
+      const notes: string[] = [];
       if (back.length) {
-        setActionError(
-          `Kodlar silindi ama ${back.join(', ')} hemen geri geldi. Arıza hâlâ aktif; sebebi giderilmeden kod tekrar oluşur.`
+        notes.push(`${back.join(', ')} silindikten hemen sonra geri geldi. Arıza şu an aktif; sebebi giderilmeden kod tekrar oluşur.`);
+      }
+      if (permanent.length) {
+        notes.push(
+          `${permanent.join(', ')} kalıcı kod. Kalıcı kodlar hiçbir cihazla silinemez; arıza giderildikten sonra araç birkaç sürüşte kendi siler.`
         );
       }
+      if (notes.length) setActionError(notes.join('\n\n'));
     } catch (e) {
       setConfirm(false);
       setActionError(userMessage(e));

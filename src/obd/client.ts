@@ -605,7 +605,8 @@ export class OBDClient {
 
   /** Mode 04. Clears stored/pending DTCs and freeze frames (not permanent ones). */
   clearDTCs(): Promise<string> {
-    return this.send('04');
+    // Some ECUs take several seconds to acknowledge a clear.
+    return this.send('04', 10000);
   }
 
   /** Read a Mode 01 PID by registry id (e.g. 'RPM'). */
